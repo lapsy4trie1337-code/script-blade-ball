@@ -1,4 +1,4 @@
--- Auto Parry v15 — Ultra Reactif | Zero Lag | Intelligent
+-- Auto Parry v16 — Ultra Reactif | Detection par position
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -15,6 +15,7 @@ local function rkey()
     return s
 end
 local RK = rkey()
+local RK2 = rkey()
 
 -- ═══════════════════════════════════════
 --  ETAT
@@ -28,14 +29,15 @@ local compteur = 0
 local streak = 0
 local best = 0
 local ouvert = true
-local curDist = 999
-local prevDist = 999
-local prevTime = 0
-local closingSpd = 0
-local approcheSuite = 0
-local eta = 999
 local frameN = 0
 local cachedRouge = false
+
+-- Tracking par position (pas besoin de AssemblyLinearVelocity)
+local prevBPos = nil
+local prevBTime = 0
+local calcVel = {X = 0, Y = 0, Z = 0, Magnitude = 0}
+local prevDist = 999
+local prevDistTime = 0
 
 -- ═══════════════════════════════════════
 --  COULEURS
@@ -73,15 +75,8 @@ LP.CharacterRemoving:Connect(function()
 end)
 
 -- ═══════════════════════════════════════
---  DETECTION BALLE — events + scan leger
+--  DETECTION BALLE
 -- ═══════════════════════════════════════
-local function resetTracking()
-    prevDist = 999
-    closingSpd = 0
-    approcheSuite = 0
-    eta = 999
-end
-
 local function scanBalle()
     for _, name in pairs({"Ball", "ball", "Balle", "Projectile", "projectile", "Orb", "orb"}) do
         local ok, b = pcall(workspace.FindFirstChild, workspace, name, true)
@@ -100,22 +95,38 @@ local function scanBalle()
     return nil
 end
 
+local function estJoueur(o)
+    local p = o.Parent
+    while p and p ~= workspace do
+        if Players:GetPlayerFromCharacter(p) then return true end
+        p = p.Parent
+    end
+    return false
+end
+
 local function scanComplet()
     local r = scanBalle()
     if r then return r end
     for _, v in pairs(workspace:GetDescendants()) do
         if (v:IsA("BasePart") or v:IsA("MeshPart")) and not v.Anchored then
             local n = v.Name:lower()
-            if n == "ball" or n == "balle" or n:find("projectile") or n:find("orb") then return v end
-            local a1, a2
+            if n == "ball" or n == "balle" or n:find("projectile") or n:find("orb") then
+                if not estJoueur(v) then return v end
+            end
+            local a1
             pcall(function() a1 = v:GetAttribute("Target") end)
-            pcall(function() a2 = v:GetAttribute("target") end)
-            if a1 ~= nil or a2 ~= nil then return v end
-            local s, vel = pcall(function() return v.AssemblyLinearVelocity end)
-            if s and vel and vel.Magnitude > 30 and v.Size.Magnitude < 15 and v.Name ~= "Baseplate" then return v end
+            if a1 ~= nil and not estJoueur(v) then return v end
         end
     end
     return nil
+end
+
+local function resetBalle()
+    prevBPos = nil
+    prevBTime = 0
+    calcVel = {X = 0, Y = 0, Z = 0, Magnitude = 0}
+    prevDist = 999
+    prevDistTime = 0
 end
 
 workspace.DescendantAdded:Connect(function(o)
@@ -125,14 +136,11 @@ workspace.DescendantAdded:Connect(function(o)
     local n = o.Name:lower()
     if n == "ball" or n == "balle" or n:find("projectile") or n:find("orb") then
         balle = o
-        resetTracking()
+        resetBalle()
     end
 end)
 workspace.DescendantRemoving:Connect(function(o)
-    if o == balle then
-        balle = nil
-        resetTracking()
-    end
+    if o == balle then balle = nil; resetBalle() end
 end)
 
 balle = scanComplet()
@@ -143,13 +151,13 @@ task.spawn(function()
         if not balle or not balle.Parent then
             local b = scanBalle()
             if not b then b = scanComplet() end
-            if b then balle = b; resetTracking() end
+            if b then balle = b; resetBalle() end
         end
     end
 end)
 
 -- ═══════════════════════════════════════
---  TARGET CHECK — chaque frame pour max reactivite
+--  TARGET CHECK
 -- ═══════════════════════════════════════
 local function matchT(t)
     if t == nil then return false end
@@ -187,34 +195,44 @@ local function charEstRouge()
     if not cachedChar then return false end
     for _, ch in pairs(cachedChar:GetChildren()) do
         if ch:IsA("Highlight") then
-            local ok, fc = pcall(function() return ch.FillColor end)
-            if ok and fc and fc.R > 0.5 and fc.G < 0.35 then return true end
+            local ok1, fc = pcall(function() return ch.FillColor end)
+            if ok1 and fc and fc.R > 0.5 and fc.G < 0.35 then return true end
             local ok2, oc = pcall(function() return ch.OutlineColor end)
             if ok2 and oc and oc.R > 0.5 and oc.G < 0.35 then return true end
         elseif ch:IsA("SelectionBox") then
-            local ok, c3 = pcall(function() return ch.Color3 end)
-            if ok and c3 and c3.R > 0.5 and c3.G < 0.35 then return true end
+            local ok1, c3 = pcall(function() return ch.Color3 end)
+            if ok1 and c3 and c3.R > 0.5 and c3.G < 0.35 then return true end
         end
     end
     return false
 end
 
 -- ═══════════════════════════════════════
---  PARRY
+--  PARRY — escalation intelligente
 -- ═══════════════════════════════════════
-local function doParry(spd)
+local function doParry(spd, dist, confirme)
     local now = tick()
-    if now - dernierP < 0.35 then return end
+    local cd, nb
+
+    if confirme and dist < 15 and spd > 200 then
+        cd = 0.02; nb = 6
+    elseif confirme and dist < 25 and spd > 100 then
+        cd = 0.04; nb = 4
+    elseif confirme and spd > 50 then
+        cd = 0.08; nb = 2
+    elseif confirme then
+        cd = 0.15; nb = 1
+    else
+        cd = 0.15; nb = 1
+    end
+
+    if now - dernierP < cd then return false end
     dernierP = now
     compteur = compteur + 1
     streak = streak + 1
     if streak > best then best = streak end
-    pcall(mouse1click)
-    if spd > 250 then pcall(mouse1click) end
-    prevDist = curDist
-    closingSpd = 0
-    approcheSuite = 0
-    eta = 999
+    for _ = 1, nb do pcall(mouse1click) end
+    return true
 end
 
 -- ═══════════════════════════════════════
@@ -250,7 +268,7 @@ local function rnd(p, r)
 end
 
 local W = 320
-local H_OPEN = 360
+local H_OPEN = 330
 local H_CLOSED = 44
 
 local panel = mk("Frame", {
@@ -268,7 +286,7 @@ mk("Frame", {Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 0), 
 local statusDot = mk("Frame", {Size = UDim2.new(0, 10, 0, 10), Position = UDim2.new(0, 12, 0, 17), BackgroundColor3 = GREEN, Parent = hdr})
 rnd(statusDot, 5)
 local statusLbl = mk("TextLabel", {Size = UDim2.new(0, 50, 0, 14), Position = UDim2.new(0, 28, 0, 15), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
-mk("TextLabel", {Size = UDim2.new(0, 140, 0, 14), Position = UDim2.new(0, 82, 0, 15), BackgroundTransparency = 1, Text = "AUTO PARRY v15", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
+mk("TextLabel", {Size = UDim2.new(0, 140, 0, 14), Position = UDim2.new(0, 82, 0, 15), BackgroundTransparency = 1, Text = "AUTO PARRY v16", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
 local btnMin = mk("TextButton", {Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -36, 0, 8), BackgroundColor3 = BG4, Text = "-", TextColor3 = TXT2, Font = Enum.Font.GothamBold, TextSize = 15, Parent = hdr})
 rnd(btnMin, 7)
 btnMin.MouseButton1Click:Connect(function()
@@ -314,26 +332,25 @@ local function majToggle()
 end
 tBtn.MouseButton1Click:Connect(function() actif = not actif; majToggle() end)
 
-local ic = sect(228, "Info", 72)
+local ic = sect(228, "Info", 50)
 mk("TextLabel", {
-    Size = UDim2.new(1, -14, 0, 56), Position = UDim2.new(0, 7, 0, 18),
+    Size = UDim2.new(1, -14, 0, 34), Position = UDim2.new(0, 7, 0, 16),
     BackgroundTransparency = 1, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left,
-    Text = "Confirme = parry agressif (distance + vitesse)\nEstime = parry prudent (ETA + approche)\n1-2 clics | Cooldown 0.35s | Anti-detection\n\nRShift = On/Off  |  RCtrl = Masquer",
+    Text = "Velocite calculee par position (fiable)\nEscalade clics: proche+rapide = max spam\nRShift = On/Off  |  RCtrl = Masquer",
     TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 8, Parent = ic,
 })
 
-local btnScan = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 24), Position = UDim2.new(0, 10, 0, 306), BackgroundColor3 = BG3, Text = "Chercher balle", TextColor3 = TXT2, Font = Enum.Font.Gotham, TextSize = 9, Parent = panel})
+local btnScan = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 22), Position = UDim2.new(0, 10, 0, 284), BackgroundColor3 = BG3, Text = "Chercher balle", TextColor3 = TXT2, Font = Enum.Font.Gotham, TextSize = 9, Parent = panel})
 rnd(btnScan, 6)
-btnScan.MouseButton1Click:Connect(function() balle = scanComplet(); resetTracking() end)
-local btnRst = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 24), Position = UDim2.new(0.53, 0, 0, 306), BackgroundColor3 = BG3, Text = "Reset stats", TextColor3 = TXT2, Font = Enum.Font.Gotham, TextSize = 9, Parent = panel})
+btnScan.MouseButton1Click:Connect(function() balle = scanComplet(); resetBalle() end)
+local btnRst = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 22), Position = UDim2.new(0.53, 0, 0, 284), BackgroundColor3 = BG3, Text = "Reset stats", TextColor3 = TXT2, Font = Enum.Font.Gotham, TextSize = 9, Parent = panel})
 rnd(btnRst, 6)
 btnRst.MouseButton1Click:Connect(function() compteur = 0; streak = 0; best = 0 end)
 
-mk("TextLabel", {Size = UDim2.new(1, -20, 0, 16), Position = UDim2.new(0, 10, 0, 336), BackgroundTransparency = 1, Text = "v15 | Ultra Reactif | Zero Lag", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
+mk("TextLabel", {Size = UDim2.new(1, -20, 0, 16), Position = UDim2.new(0, 10, 0, 310), BackgroundTransparency = 1, Text = "v16 | Position Tracking | Double Loop 120fps", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
 
 local flash = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = ACCENT, BackgroundTransparency = 1, ZIndex = 100, Parent = gui})
 
--- DRAG
 local dd, sp
 hdr.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then dd = i.Position; sp = panel.Position end
@@ -360,27 +377,12 @@ end)
 gui.Parent = LP:WaitForChild("PlayerGui")
 
 -- ═══════════════════════════════════════
---  BOUCLE PRINCIPALE
---
---  CONFIRME (attribut) = parry agressif par distance + vitesse
---  ESTIME (velocite)   = parry prudent par ETA + approche
---
---  Attributs checkes CHAQUE FRAME pour zero delai
---  UI mise a jour toutes les 15 frames
+--  CORE — la fonction de check qui tourne 120x/sec
 -- ═══════════════════════════════════════
-RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
-    frameN = frameN + 1
-
+local function coreCheck()
     local b = balle
-    if not b or not b.Parent then
-        streak = 0
-        if frameN % 15 == 0 then
-            lBalle.Text = "Recherche..."
-            lBalle.TextColor3 = ORANGE
-            lInfo.Text = ""; lEta.Text = ""; lMode.Text = ""
-        end
-        return
-    end
+    if not b or not b.Parent then streak = 0; return end
+    if not actif then return end
 
     local hrp = cachedHRP
     if not hrp then majChar(); hrp = cachedHRP end
@@ -393,90 +395,109 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
     local dy = bPos.Y - hPos.Y
     local dz = bPos.Z - hPos.Z
     local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-    curDist = dist
 
-    -- Closing speed (lissage rapide 0.5)
+    -- ═══ VELOCITE CALCULEE PAR POSITION ═══
+    -- On ne depend plus de AssemblyLinearVelocity (peut etre nil cote client)
     local now = tick()
-    local dt = now - prevTime
-    if dt > 0.005 then
-        local raw = (prevDist - dist) / dt
-        if closingSpd == 0 and raw > 0 then
-            closingSpd = raw
-        else
-            closingSpd = closingSpd * 0.5 + raw * 0.5
+    local vx, vy, vz, spd = 0, 0, 0, 0
+    if prevBPos then
+        local dt = now - prevBTime
+        if dt > 0.001 then
+            vx = (bPos.X - prevBPos.X) / dt
+            vy = (bPos.Y - prevBPos.Y) / dt
+            vz = (bPos.Z - prevBPos.Z) / dt
+            spd = math.sqrt(vx * vx + vy * vy + vz * vz)
+            calcVel = {X = vx, Y = vy, Z = vz, Magnitude = spd}
         end
-        if dist < prevDist - 0.2 then
-            approcheSuite = approcheSuite + 1
-        else
-            approcheSuite = 0
-        end
-        prevDist = dist
-        prevTime = now
-    end
-
-    if closingSpd > 2 then
-        eta = dist / closingSpd
     else
-        eta = 999
+        local velOk, vel = pcall(function() return b.AssemblyLinearVelocity end)
+        if velOk and vel then
+            vx, vy, vz = vel.X, vel.Y, vel.Z
+            spd = vel.Magnitude
+            calcVel = {X = vx, Y = vy, Z = vz, Magnitude = spd}
+        end
+    end
+    prevBPos = bPos
+    prevBTime = now
+
+    -- Distance approche?
+    local approche = dist < prevDist - 0.1
+    if now - prevDistTime > 0.01 then
+        prevDist = dist
+        prevDistTime = now
     end
 
-    -- Vitesse balle
-    local velOk, vel = pcall(function() return b.AssemblyLinearVelocity end)
-    if not velOk then velOk, vel = pcall(function() return b.Velocity end) end
-    local spd = (velOk and vel) and vel.Magnitude or 0
-
-    -- ═══ DETECTION + PARRY ═══
-
-    if frameN % 4 == 0 then cachedRouge = charEstRouge() end
-
-    -- 1) CONFIRME — attribut OU personnage rouge = on sait que c'est nous
-    --    Parry AGRESSIF : distance + vitesse + PREDICTION
+    -- ═══ DETECTION CIBLE ═══
     local confirme = checkAttributs(b) or cachedRouge
 
-    if actif and confirme then
-        local seuil = math.clamp(12 + spd * 0.14, 12, 75)
+    if confirme then
+        -- CONFIRME : parry agressif
+        local seuil = math.clamp(15 + spd * 0.15, 15, 80)
 
-        local predFrames = 3
-        if spd > 300 then predFrames = 5
-        elseif spd > 150 then predFrames = 4 end
-
+        -- Prediction : position future de la balle
         local predDist = dist
-        if velOk and vel and spd > 5 then
-            local pdt = predFrames / 60
-            local px = bPos.X + vel.X * pdt - hPos.X
-            local py = bPos.Y + vel.Y * pdt - hPos.Y
-            local pz = bPos.Z + vel.Z * pdt - hPos.Z
+        if spd > 10 then
+            local frames = 3
+            if spd > 300 then frames = 5
+            elseif spd > 150 then frames = 4 end
+            local pdt = frames / 60
+            local px = bPos.X + vx * pdt - hPos.X
+            local py = bPos.Y + vy * pdt - hPos.Y
+            local pz = bPos.Z + vz * pdt - hPos.Z
             predDist = math.sqrt(px * px + py * py + pz * pz)
         end
 
         if dist < seuil or predDist < seuil then
-            doParry(spd)
-            pcall(function()
-                flash.BackgroundTransparency = 0.85
-                TweenService:Create(flash, TweenInfo.new(0.08), {BackgroundTransparency = 1}):Play()
-            end)
+            local ok = doParry(spd, dist, true)
+            if ok then
+                pcall(function()
+                    flash.BackgroundTransparency = 0.85
+                    TweenService:Create(flash, TweenInfo.new(0.06), {BackgroundTransparency = 1}):Play()
+                end)
+            end
         end
-    end
-
-    -- 2) ESTIME — velocite seulement, etre prudent
-    --    Parry quand ETA < 0.38s + balle approche 3+ frames + dot > 0.2
-    if actif and not confirme and velOk and vel and spd > 10 and dist > 0.5 then
+    elseif spd > 5 and dist > 0.5 then
+        -- ESTIME : dot product avec velocite calculee
         local invD = 1 / dist
-        local invS = 1 / spd
-        local dotP = (vel.X * invS) * ((-dx) * invD) + (vel.Y * invS) * ((-dy) * invD) + (vel.Z * invS) * ((-dz) * invD)
-        if dotP > 0.2 and approcheSuite >= 3 and closingSpd > 10 and eta > 0.03 and eta < 0.38 then
-            doParry(spd)
-            pcall(function()
-                flash.BackgroundTransparency = 0.85
-                TweenService:Create(flash, TweenInfo.new(0.08), {BackgroundTransparency = 1}):Play()
-            end)
+        local invS = 1 / math.max(spd, 0.1)
+        local dotP = (vx * invS) * ((-dx) * invD) + (vy * invS) * ((-dy) * invD) + (vz * invS) * ((-dz) * invD)
+        local seuil = math.clamp(10 + spd * 0.1, 10, 50)
+
+        if dotP > 0.15 and dist < seuil and approche then
+            local ok = doParry(spd, dist, false)
+            if ok then
+                pcall(function()
+                    flash.BackgroundTransparency = 0.85
+                    TweenService:Create(flash, TweenInfo.new(0.06), {BackgroundTransparency = 1}):Play()
+                end)
+            end
         end
+
+        if dotP < 0.1 then streak = 0 end
+    else
+        streak = 0
     end
+end
 
-    if not confirme and approcheSuite < 3 then streak = 0 end
+-- ═══════════════════════════════════════
+--  DOUBLE BOUCLE — 120 checks/sec
+--  RenderStepped (avant render) + Heartbeat (apres physique)
+-- ═══════════════════════════════════════
+RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
+    frameN = frameN + 1
+    if frameN % 4 == 0 then cachedRouge = charEstRouge() end
+    coreCheck()
 
-    -- ═══ UI (toutes les 15 frames) ═══
-    if frameN % 15 ~= 0 then return end
+    -- UI toutes les 20 frames
+    if frameN % 20 ~= 0 then return end
+
+    local b = balle
+    if not b or not b.Parent then
+        lBalle.Text = "Recherche..."
+        lBalle.TextColor3 = ORANGE
+        lInfo.Text = ""; lEta.Text = ""; lMode.Text = ""
+        return
+    end
 
     lP.Text = tostring(compteur)
     lS.Text = tostring(streak)
@@ -484,31 +505,42 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
     lBalle.Text = b.Name
     lBalle.TextColor3 = GREEN
 
+    local spd = calcVel.Magnitude
+    local hrp = cachedHRP
+    local dist = 0
+    if hrp then
+        local okP, bPos = pcall(function() return b.Position end)
+        if okP then
+            local dx = bPos.X - hrp.Position.X
+            local dy = bPos.Y - hrp.Position.Y
+            local dz = bPos.Z - hrp.Position.Z
+            dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        end
+    end
+
+    lInfo.Text = "Dist " .. math.floor(dist) .. " | Vit " .. math.floor(spd) .. "/s"
+    lInfo.TextColor3 = YELLOW
+
+    local confirme = checkAttributs(b) or cachedRouge
     if confirme then
-        local seuil = math.clamp(12 + spd * 0.14, 12, 75)
-        lInfo.Text = "Dist " .. math.floor(dist) .. "/" .. math.floor(seuil) .. " | Vit " .. math.floor(spd)
-        lInfo.TextColor3 = YELLOW
-        lEta.Text = "Zone parry: " .. math.floor(seuil) .. " studs"
+        local seuil = math.clamp(15 + spd * 0.15, 15, 80)
+        lEta.Text = "Zone " .. math.floor(seuil) .. " studs"
         lEta.TextColor3 = dist < seuil and RED or YELLOW
         lMode.Text = "CONFIRME"
         lMode.TextColor3 = GREEN
-    elseif approcheSuite >= 3 and closingSpd > 10 then
-        lInfo.Text = "Dist " .. math.floor(dist) .. " | Approche " .. math.floor(closingSpd) .. "/s"
-        lInfo.TextColor3 = ORANGE
-        if eta < 30 then
-            lEta.Text = "ETA " .. string.format("%.2f", eta) .. "s"
-        else
-            lEta.Text = "ETA ---"
-        end
-        lEta.TextColor3 = eta < 0.5 and RED or YELLOW
+    elseif spd > 5 then
+        lEta.Text = "Vit calculee par position"
+        lEta.TextColor3 = TXT2
         lMode.Text = "ESTIME"
         lMode.TextColor3 = ORANGE
     else
-        lInfo.Text = "Dist " .. math.floor(dist) .. " | Vit " .. math.floor(spd)
-        lInfo.TextColor3 = TXT3
         lEta.Text = ""
         lMode.Text = ""
     end
 end)
 
-print("[AutoParry] v15 | Ultra Reactif | Zero Lag")
+RunService.Heartbeat:Connect(function()
+    coreCheck()
+end)
+
+print("[AutoParry] v16 | Position Tracking | 120fps | Escalade clics")

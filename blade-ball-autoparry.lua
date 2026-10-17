@@ -141,6 +141,10 @@ end)
 -- ═══════════════════════════════════════════════
 local attrNoms = {"Target","target","realTarget","RealTarget","CurrentTarget","currentTarget","TargetPlayer","targetPlayer","PlayerTarget"}
 
+local lpName = LP.Name
+local lpId = LP.UserId
+local lpIdStr = tostring(lpId)
+
 local function checkCible(b)
     local hrp = cachedHRP
     if not hrp then updateCharCache(); hrp = cachedHRP end
@@ -153,51 +157,51 @@ local function checkCible(b)
     local dz = bPos.Z - hPos.Z
     local d = math.sqrt(dx*dx + dy*dy + dz*dz)
 
-    local s1, vel = pcall(function() return b.AssemblyLinearVelocity end)
-    if not s1 then s1, vel = pcall(function() return b.Velocity end) end
-    local spd = (s1 and vel) and vel.Magnitude or 0
+    local velOk, vel = pcall(function() return b.AssemblyLinearVelocity end)
+    if not velOk then velOk, vel = pcall(function() return b.Velocity end) end
+    local spd = (velOk and vel) and vel.Magnitude or 0
 
-    -- 1) Attributs (le plus fiable et rapide)
-    local sources = {b}
+    -- 1) Attributs directs sur la balle (le plus rapide, pas de pcall)
+    local t = b:GetAttribute("Target") or b:GetAttribute("target") or b:GetAttribute("realTarget") or b:GetAttribute("CurrentTarget")
+    if t ~= nil then
+        local m = false
+        if typeof(t) == "Instance" then m = (t == cachedChar or t == LP)
+        elseif typeof(t) == "string" then m = (t == lpName or t == lpIdStr)
+        elseif typeof(t) == "number" then m = (t == lpId) end
+        return m, d, spd
+    end
+
+    -- 2) Attributs sur le parent
     local par = b.Parent
-    if par and par ~= workspace then sources[2] = par end
-
-    for si = 1, #sources do
-        local src = sources[si]
-        for ai = 1, #attrNoms do
-            local ok2, t = pcall(function() return src:GetAttribute(attrNoms[ai]) end)
-            if ok2 and t ~= nil then
-                local m = false
-                if typeof(t) == "Instance" then m = (t == cachedChar or t == LP)
-                elseif typeof(t) == "string" then m = (t == LP.Name or t == tostring(LP.UserId))
-                elseif typeof(t) == "number" then m = (t == LP.UserId) end
-                return m, d, spd
-            end
+    if par and par ~= workspace then
+        t = par:GetAttribute("Target") or par:GetAttribute("target") or par:GetAttribute("realTarget")
+        if t ~= nil then
+            local m = false
+            if typeof(t) == "Instance" then m = (t == cachedChar or t == LP)
+            elseif typeof(t) == "string" then m = (t == lpName or t == lpIdStr)
+            elseif typeof(t) == "number" then m = (t == lpId) end
+            return m, d, spd
         end
     end
 
-    -- 2) ObjectValue
+    -- 3) ObjectValue enfant
     for _, ch in pairs(b:GetChildren()) do
         if ch:IsA("ObjectValue") and ch.Value then
             return (ch.Value == cachedChar or ch.Value == LP), d, spd
         end
     end
 
-    -- 3) Velocite (seuil tres bas = detecte TRES vite)
-    if s1 and vel and spd > 5 then
+    -- 4) Velocite (calcul inline rapide, pas de .Unit)
+    if velOk and vel and spd > 5 then
         local dirX = hPos.X - bPos.X
         local dirY = hPos.Y - bPos.Y
         local dirZ = hPos.Z - bPos.Z
-        local dirMag = math.sqrt(dirX*dirX + dirY*dirY + dirZ*dirZ)
-        if dirMag > 0.01 then
-            dirX = dirX / dirMag
-            dirY = dirY / dirMag
-            dirZ = dirZ / dirMag
-            local velMag = vel.Magnitude
-            if velMag > 0.01 then
-                local dot = (vel.X/velMag)*dirX + (vel.Y/velMag)*dirY + (vel.Z/velMag)*dirZ
-                if dot > C.Sensibilite then return true, d, spd end
-            end
+        local dm = d
+        if dm > 0.01 then
+            local invDm = 1 / dm
+            local invSpd = 1 / spd
+            local dot = (vel.X*invSpd)*(dirX*invDm) + (vel.Y*invSpd)*(dirY*invDm) + (vel.Z*invSpd)*(dirZ*invDm)
+            if dot > C.Sensibilite then return true, d, spd end
         end
     end
 
@@ -633,38 +637,45 @@ end)
 gui.Parent = LP:WaitForChild("PlayerGui")
 
 -- ═══════════════════════════════════════════════
---  BOUCLE PRINCIPALE
+--  BOUCLE PRINCIPALE — parry chaque frame, UI throttle
 -- ═══════════════════════════════════════════════
+local frameCount = 0
+local UI_SKIP = 6
+
 RunService:BindToRenderStep(RENDER_KEY, Enum.RenderPriority.First.Value, function()
-    local ok = balle and balle.Parent and true or false
+    local b = balle
+    local ok = b and b.Parent and true or false
     if ok then
-        local s2, r1, r2, r3 = pcall(checkCible, balle)
+        local s2, r1, r2, r3 = pcall(checkCible, b)
         if s2 then cible, dBalle, vBalle = r1, r2, r3 else cible = false; dBalle = 0; vBalle = 0 end
     else
         cible = false; dBalle = 0; vBalle = 0
     end
     if not cible then streak = 0 end
 
-    -- Update UI seulement sur l'onglet statut
-    if onglet == 1 then
-        lblParrys.Text = tostring(compteur)
-        lblStreak.Text = tostring(streak)
-        lblBest.Text = tostring(best)
-        if ok then lblBS.Text = "Balle: " .. balle.Name; lblBS.TextColor3 = GREEN
-        else lblBS.Text = "Recherche en cours..."; lblBS.TextColor3 = ORANGE end
-        lblBI.Text = "Vitesse: " .. math.floor(vBalle) .. " | Distance: " .. math.floor(dBalle) .. " | Cible: " .. (cible and "OUI" or "non")
-        lblBI.TextColor3 = cible and YELLOW or TEXT3
-        if cible and vBalle > 0 and dBalle > 0 then
-            local ti = dBalle / math.max(vBalle, 1)
-            lblTI.Text = "Temps impact: " .. string.format("%.2f", ti) .. "s | Seuil parry: " .. (C.Mode == 1 and math.floor(math.clamp(10+vBalle*0.09,10,55)) .. " studs" or C.Mode == 2 and string.format("%.2f", math.clamp(0.18+vBalle/250,0.18,2)) .. "s" or C.DistanceParry .. " studs")
-        else
-            lblTI.Text = ""
-        end
-        logLbl.Text = derLog
-    end
+    -- Parry check chaque frame (reactif)
+    if C.Active and ok and cible and doitParry(dBalle, vBalle) then parry() end
 
-    if not C.Active or not ok or not cible then return end
-    if doitParry(dBalle, vBalle) then parry() end
+    -- UI update seulement toutes les 6 frames (~10 fps)
+    frameCount = frameCount + 1
+    if frameCount < UI_SKIP then return end
+    frameCount = 0
+
+    if onglet ~= 1 then return end
+
+    lblParrys.Text = tostring(compteur)
+    lblStreak.Text = tostring(streak)
+    lblBest.Text = tostring(best)
+    if ok then lblBS.Text = "Balle: " .. b.Name; lblBS.TextColor3 = GREEN
+    else lblBS.Text = "Recherche..."; lblBS.TextColor3 = ORANGE end
+    lblBI.Text = "Vit: " .. math.floor(vBalle) .. " | Dist: " .. math.floor(dBalle) .. " | " .. (cible and "CIBLE" or "-")
+    lblBI.TextColor3 = cible and YELLOW or TEXT3
+    if cible and vBalle > 1 then
+        lblTI.Text = "Impact: " .. string.format("%.2f", dBalle / vBalle) .. "s"
+    else
+        lblTI.Text = ""
+    end
+    logLbl.Text = derLog
 end)
 
 print("[AutoParry] v11 charge - Mode: " .. mNoms[C.Mode] .. " | Sensibilite: " .. C.Sensibilite .. " | Cooldown: " .. COOLDOWN)

@@ -1,8 +1,8 @@
--- Blade Ball Auto Parry v4
+-- Blade Ball Auto Parry v5
+-- Utilise mouse1click() — la methode native du jeu
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local UIS = game:GetService("UserInputService")
 local LP = Players.LocalPlayer
@@ -12,10 +12,9 @@ local LP = Players.LocalPlayer
 -- ═══════════════════════════════════════════════
 local Config = {
     Active = true,
-    DistanceParry = 15,
+    DistanceParry = 18,
     DistanceMin = 0,
     Delai = 0,
-    ModeDebug = true,
     ToucheToggle = Enum.KeyCode.RightShift,
     TouchePanel = Enum.KeyCode.RightControl,
 }
@@ -24,175 +23,69 @@ local Config = {
 --  VARIABLES
 -- ═══════════════════════════════════════════════
 local balleCachee = nil
-local remoteTrouve = nil
 local dernierParry = 0
 local compteurParry = 0
-local logMessages = {}
+local dernierLog = "En attente..."
 
 local function log(msg)
-    table.insert(logMessages, os.clock() .. " | " .. msg)
-    if #logMessages > 30 then table.remove(logMessages, 1) end
+    dernierLog = msg
     warn("[AutoParry] " .. msg)
 end
 
 -- ═══════════════════════════════════════════════
---  SCANNER : DUMP TOUT LE JEU DANS LA CONSOLE
--- ═══════════════════════════════════════════════
-local function scannerJeu()
-    log("=== SCAN DU JEU ===")
-
-    -- Lister tous les remotes dans ReplicatedStorage
-    log("--- REMOTES dans ReplicatedStorage ---")
-    local nbRemotes = 0
-    for _, v in pairs(RS:GetDescendants()) do
-        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
-            log("  Remote: " .. v:GetFullName() .. " [" .. v.ClassName .. "]")
-            nbRemotes += 1
-        end
-    end
-    log("Total remotes RS: " .. nbRemotes)
-
-    -- Lister les enfants directs du workspace
-    log("--- ENFANTS du Workspace ---")
-    for _, v in pairs(workspace:GetChildren()) do
-        log("  " .. v.ClassName .. ": " .. v.Name)
-    end
-
-    -- Chercher tout ce qui ressemble a une balle
-    log("--- RECHERCHE BALLE ---")
-    for _, v in pairs(workspace:GetDescendants()) do
-        if v:IsA("BasePart") then
-            local n = v.Name:lower()
-            if n:find("ball") or n:find("balle") or n:find("projectile")
-                or n:find("orb") or n:find("sphere") then
-                log("  Balle possible: " .. v:GetFullName())
-                -- Lister ses attributs
-                for _, attr in pairs(v:GetAttributes()) do end
-                local attrs = v:GetAttributes()
-                for k, val in pairs(attrs) do
-                    log("    Attribut: " .. k .. " = " .. tostring(val))
-                end
-                -- Lister ses enfants
-                for _, child in pairs(v:GetChildren()) do
-                    log("    Enfant: " .. child.ClassName .. " " .. child.Name)
-                    if child:IsA("ObjectValue") then
-                        log("      Valeur: " .. tostring(child.Value))
-                    end
-                end
-            end
-        end
-    end
-
-    -- Chercher des modules/dossiers importants
-    log("--- DOSSIERS IMPORTANTS ---")
-    local noms = {"Balls", "Ball", "Remotes", "Events", "Game", "Combat", "Abilities", "Shared"}
-    for _, nom in pairs(noms) do
-        local obj = workspace:FindFirstChild(nom) or RS:FindFirstChild(nom)
-        if obj then
-            log("  Trouve: " .. obj:GetFullName())
-            for _, child in pairs(obj:GetChildren()) do
-                log("    " .. child.ClassName .. ": " .. child.Name)
-            end
-        end
-    end
-
-    log("=== FIN SCAN ===")
-end
-
--- ═══════════════════════════════════════════════
 --  TROUVER LA BALLE
+--  Cherche large : tout BasePart/MeshPart rond
+--  qui bouge vite et qui n'est pas un joueur
 -- ═══════════════════════════════════════════════
 local function estUneBalle(obj)
     if not (obj:IsA("BasePart") or obj:IsA("MeshPart")) then return false end
+
+    -- Par nom
     local n = obj.Name:lower()
     if n == "ball" or n == "balle" or n == "projectile" or n == "orb" then
         return true
     end
-    if obj.Shape and obj.Shape == Enum.PartType.Ball then
-        local attrs = obj:GetAttributes()
-        if attrs["Target"] or attrs["target"] or attrs["realTarget"] or attrs["CurrentTarget"] then
-            return true
-        end
+
+    -- Par attribut cible
+    if obj:GetAttribute("Target") or obj:GetAttribute("target")
+        or obj:GetAttribute("realTarget") or obj:GetAttribute("CurrentTarget") then
+        return true
     end
+
+    -- Par dossier parent
     if obj.Parent then
         local pn = obj.Parent.Name:lower()
-        if pn == "balls" or pn == "ball" or pn == "balles" then
-            return true
-        end
+        if pn == "balls" or pn == "ball" then return true end
     end
+
     return false
 end
 
-local function surAjout(obj)
+-- Quand un objet apparait dans le workspace
+workspace.DescendantAdded:Connect(function(obj)
     if estUneBalle(obj) then
         balleCachee = obj
-        log("Balle detectee: " .. obj:GetFullName())
-
-        -- Surveiller les changements d'attributs
-        obj.AttributeChanged:Connect(function(attr)
-            if Config.ModeDebug then
-                log("Attribut change: " .. attr .. " = " .. tostring(obj:GetAttribute(attr)))
-            end
-        end)
+        log("Balle trouvee: " .. obj:GetFullName())
     end
-end
+end)
 
-local function surRetrait(obj)
+workspace.DescendantRemoving:Connect(function(obj)
     if obj == balleCachee then
         balleCachee = nil
-        log("Balle disparue")
     end
-end
-
-workspace.DescendantAdded:Connect(surAjout)
-workspace.DescendantRemoving:Connect(surRetrait)
+end)
 
 -- Scan initial
 for _, v in pairs(workspace:GetDescendants()) do
     if estUneBalle(v) then
         balleCachee = v
-        log("Balle trouvee au demarrage: " .. v:GetFullName())
+        log("Balle au demarrage: " .. v:GetFullName())
         break
     end
 end
 
 -- ═══════════════════════════════════════════════
---  TROUVER LE REMOTE
--- ═══════════════════════════════════════════════
-local function chercherRemote()
-    -- Chercher dans tout RS
-    for _, v in pairs(RS:GetDescendants()) do
-        if v:IsA("RemoteEvent") then
-            local n = v.Name:lower()
-            if n:find("parry") or n:find("block") or n:find("deflect") then
-                remoteTrouve = v
-                log("Remote principal: " .. v:GetFullName())
-                return
-            end
-        end
-    end
-
-    -- Si rien, chercher plus large
-    for _, v in pairs(RS:GetDescendants()) do
-        if v:IsA("RemoteEvent") then
-            local n = v.Name:lower()
-            if n:find("hit") or n:find("slash") or n:find("swing")
-                or n:find("click") or n:find("action") or n:find("ability")
-                or n:find("combat") or n:find("attack") or n:find("use") then
-                remoteTrouve = v
-                log("Remote secondaire: " .. v:GetFullName())
-                return
-            end
-        end
-    end
-
-    log("AUCUN remote trouve - utilise mouse1click en fallback")
-end
-
-chercherRemote()
-
--- ═══════════════════════════════════════════════
---  DETECTION CIBLE
+--  DETECTION : est-ce que la balle vient vers moi ?
 -- ═══════════════════════════════════════════════
 local function getHRP()
     local c = LP.Character
@@ -205,14 +98,15 @@ local function balleVersJoueur(balle)
 
     local dist = (balle.Position - hrp.Position).Magnitude
 
-    -- Tester tous les noms d'attributs possibles
-    local nomsAttributs = {
-        "Target", "target", "CurrentTarget", "realTarget",
-        "RealTarget", "TargetPlayer", "targetPlayer",
-        "currentTarget", "PlayerTarget"
+    -- Tester les attributs
+    local noms = {
+        "Target", "target", "realTarget", "RealTarget",
+        "CurrentTarget", "currentTarget", "TargetPlayer",
+        "targetPlayer", "PlayerTarget"
     }
 
-    for _, nom in pairs(nomsAttributs) do
+    -- Sur la balle
+    for _, nom in pairs(noms) do
         local cible = balle:GetAttribute(nom)
         if cible ~= nil then
             local estMoi = false
@@ -223,16 +117,13 @@ local function balleVersJoueur(balle)
             elseif typeof(cible) == "number" then
                 estMoi = (cible == LP.UserId)
             end
-            if Config.ModeDebug and estMoi then
-                log("Cible par attribut '" .. nom .. "': " .. tostring(cible))
-            end
             return estMoi, dist
         end
     end
 
-    -- Verifier le parent aussi
+    -- Sur le parent de la balle
     if balle.Parent and balle.Parent ~= workspace then
-        for _, nom in pairs(nomsAttributs) do
+        for _, nom in pairs(noms) do
             local cible = balle.Parent:GetAttribute(nom)
             if cible ~= nil then
                 local estMoi = false
@@ -251,22 +142,16 @@ local function balleVersJoueur(balle)
     -- ObjectValue enfant
     for _, child in pairs(balle:GetChildren()) do
         if child:IsA("ObjectValue") and child.Value then
-            if child.Value == LP.Character or child.Value == LP then
-                return true, dist
-            end
-            return false, dist
+            return (child.Value == LP.Character or child.Value == LP), dist
         end
     end
 
-    -- Dernier recours : velocite
+    -- Dernier recours : direction velocite
     local ok, vel = pcall(function() return balle.AssemblyLinearVelocity end)
-    if not ok then
-        ok, vel = pcall(function() return balle.Velocity end)
-    end
+    if not ok then ok, vel = pcall(function() return balle.Velocity end) end
     if ok and vel and vel.Magnitude > 10 then
         local vers = (hrp.Position - balle.Position).Unit
-        local dot = vel.Unit:Dot(vers)
-        if dot > 0.6 then
+        if vel.Unit:Dot(vers) > 0.6 then
             return true, dist
         end
     end
@@ -275,7 +160,7 @@ local function balleVersJoueur(balle)
 end
 
 -- ═══════════════════════════════════════════════
---  PARRY (multi-methode)
+--  PARRY : mouse1click() uniquement
 -- ═══════════════════════════════════════════════
 local function faireParry()
     local maintenant = tick()
@@ -283,78 +168,101 @@ local function faireParry()
     dernierParry = maintenant
     compteurParry += 1
 
-    -- Methode 1 : Remote
-    if remoteTrouve then
-        pcall(function()
-            remoteTrouve:FireServer()
-        end)
-        if Config.ModeDebug then log("Parry via remote") end
-        return
+    pcall(mouse1click)
+
+    log("PARRY #" .. compteurParry)
+end
+
+-- ═══════════════════════════════════════════════
+--  SCANNER (bouton dans le panel)
+-- ═══════════════════════════════════════════════
+local function scannerJeu()
+    warn("========== SCAN BLADE BALL ==========")
+
+    warn("--- Workspace enfants directs ---")
+    for _, v in pairs(workspace:GetChildren()) do
+        warn("  [" .. v.ClassName .. "] " .. v.Name)
     end
 
-    -- Methode 2 : mouse1click (fonctionne sur la plupart des executors)
-    pcall(function()
-        mouse1click()
-    end)
-
-    -- Methode 3 : fireclick si ClickDetector present
-    pcall(function()
-        local char = LP.Character
-        if char then
-            local tool = char:FindFirstChildWhichIsA("Tool")
-            if tool then
-                tool:Activate()
+    warn("--- Recherche balle (tout BasePart) ---")
+    local trouves = 0
+    for _, v in pairs(workspace:GetDescendants()) do
+        if (v:IsA("BasePart") or v:IsA("MeshPart")) and not Players:GetPlayerFromCharacter(v.Parent) then
+            local n = v.Name:lower()
+            if n:find("ball") or n:find("orb") or n:find("proj") then
+                warn("  BALLE: " .. v:GetFullName())
+                local attrs = v:GetAttributes()
+                for k, val in pairs(attrs) do
+                    warn("    attr: " .. k .. " = " .. tostring(val))
+                end
+                for _, child in pairs(v:GetChildren()) do
+                    warn("    enfant: [" .. child.ClassName .. "] " .. child.Name)
+                end
+                trouves += 1
             end
         end
-    end)
+    end
+    if trouves == 0 then
+        warn("  AUCUNE balle trouvee par nom !")
+        warn("  Listing de TOUT ce qui bouge vite :")
+        for _, v in pairs(workspace:GetDescendants()) do
+            if (v:IsA("BasePart") or v:IsA("MeshPart")) then
+                local ok, vel = pcall(function() return v.AssemblyLinearVelocity end)
+                if ok and vel and vel.Magnitude > 50 then
+                    warn("    RAPIDE: " .. v:GetFullName() .. " (vitesse=" .. math.floor(vel.Magnitude) .. ")")
+                end
+            end
+        end
+    end
 
-    if Config.ModeDebug then log("Parry via mouse1click/tool") end
+    warn("--- Dossiers cles ---")
+    local endroits = {workspace, game:GetService("ReplicatedStorage")}
+    local nomsAChercher = {"Balls", "Ball", "Alive", "Game", "Combat", "Remotes", "Events", "Shared", "Misc", "Assets"}
+    for _, parent in pairs(endroits) do
+        for _, nom in pairs(nomsAChercher) do
+            local obj = parent:FindFirstChild(nom)
+            if obj then
+                warn("  " .. obj:GetFullName() .. " (" .. obj.ClassName .. ")")
+                for _, child in pairs(obj:GetChildren()) do
+                    warn("    [" .. child.ClassName .. "] " .. child.Name)
+                end
+            end
+        end
+    end
+
+    warn("========== FIN SCAN ==========")
 end
 
 -- ═══════════════════════════════════════════════
 --  GUI
 -- ═══════════════════════════════════════════════
 local gui = Instance.new("ScreenGui")
-gui.Name = "AP_" .. math.random(10000, 99999)
+gui.Name = "AP" .. math.random(10000, 99999)
 gui.ResetOnSpawn = false
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
-local function creer(classe, props)
-    local obj = Instance.new(classe)
-    for k, v in pairs(props) do
-        if k ~= "Parent" then obj[k] = v end
-    end
-    if props.Parent then obj.Parent = props.Parent end
-    return obj
+local function creer(c, p)
+    local o = Instance.new(c)
+    for k, v in pairs(p) do if k ~= "Parent" then o[k] = v end end
+    if p.Parent then o.Parent = p.Parent end
+    return o
 end
-
-local function coins(p, r) creer("UICorner", { CornerRadius = UDim.new(0, r or 8), Parent = p }) end
+local function coins(p, r) creer("UICorner", {CornerRadius = UDim.new(0, r or 8), Parent = p}) end
 
 -- Panel
 local panel = creer("Frame", {
-    Size = UDim2.new(0, 290, 0, 480),
-    Position = UDim2.new(0, 16, 0.5, -240),
+    Size = UDim2.new(0, 280, 0, 430),
+    Position = UDim2.new(0, 16, 0.5, -215),
     BackgroundColor3 = Color3.fromRGB(15, 15, 20),
     BackgroundTransparency = 0.03,
     Parent = gui,
 })
 coins(panel, 12)
-creer("UIStroke", { Color = Color3.fromRGB(55, 55, 70), Thickness = 1.5, Parent = panel })
-
--- ScrollFrame pour le contenu
-local contenu = creer("ScrollingFrame", {
-    Size = UDim2.new(1, 0, 1, -42),
-    Position = UDim2.new(0, 0, 0, 42),
-    BackgroundTransparency = 1,
-    ScrollBarThickness = 3,
-    ScrollBarImageColor3 = Color3.fromRGB(90, 130, 255),
-    CanvasSize = UDim2.new(0, 0, 0, 520),
-    Parent = panel,
-})
+creer("UIStroke", {Color = Color3.fromRGB(55, 55, 70), Thickness = 1.5, Parent = panel})
 
 -- Barre titre
 local barre = creer("Frame", {
-    Size = UDim2.new(1, 0, 0, 42),
+    Size = UDim2.new(1, 0, 0, 40),
     BackgroundColor3 = Color3.fromRGB(22, 22, 30),
     Parent = panel,
 })
@@ -364,7 +272,7 @@ creer("TextLabel", {
     Size = UDim2.new(1, -16, 1, 0),
     Position = UDim2.new(0, 14, 0, 0),
     BackgroundTransparency = 1,
-    Text = "AUTO PARRY v4",
+    Text = "AUTO PARRY v5",
     TextColor3 = Color3.fromRGB(90, 130, 255),
     Font = Enum.Font.GothamBold,
     TextSize = 15,
@@ -374,53 +282,51 @@ creer("TextLabel", {
 
 -- Statut
 local lblStatut = creer("TextLabel", {
-    Size = UDim2.new(1, -24, 0, 18),
-    Position = UDim2.new(0, 14, 0, 6),
+    Size = UDim2.new(1, -24, 0, 20),
+    Position = UDim2.new(0, 14, 0, 48),
     BackgroundTransparency = 1,
     Text = "ACTIF",
     TextColor3 = Color3.fromRGB(0, 210, 80),
     Font = Enum.Font.GothamBold,
     TextSize = 14,
     TextXAlignment = Enum.TextXAlignment.Left,
-    Parent = contenu,
+    Parent = panel,
 })
 
 -- Stats
 local lblStats = creer("TextLabel", {
-    Size = UDim2.new(1, -24, 0, 32),
-    Position = UDim2.new(0, 14, 0, 26),
+    Size = UDim2.new(1, -24, 0, 40),
+    Position = UDim2.new(0, 14, 0, 68),
     BackgroundTransparency = 1,
-    Text = "Parrys: 0\nBalle: NON  |  Remote: NON",
+    Text = "Parrys: 0\nBalle: --  |  Methode: mouse1click",
     TextColor3 = Color3.fromRGB(120, 120, 140),
     Font = Enum.Font.Gotham,
     TextSize = 11,
-    TextXAlignment = Enum.TextXAlignment.Left,
     TextWrapped = true,
-    Parent = contenu,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = panel,
 })
 
--- Log debug
+-- Log
 local lblLog = creer("TextLabel", {
-    Size = UDim2.new(1, -24, 0, 100),
-    Position = UDim2.new(0, 14, 0, 410),
+    Size = UDim2.new(1, -24, 0, 16),
+    Position = UDim2.new(0, 14, 0, 108),
     BackgroundTransparency = 1,
     Text = "",
     TextColor3 = Color3.fromRGB(255, 200, 50),
     Font = Enum.Font.Code,
-    TextSize = 9,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    TextYAlignment = Enum.TextYAlignment.Top,
+    TextSize = 10,
     TextWrapped = true,
-    Parent = contenu,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = panel,
 })
 
--- Separateur
 creer("Frame", {
     Size = UDim2.new(1, -28, 0, 1),
-    Position = UDim2.new(0, 14, 0, 64),
+    Position = UDim2.new(0, 14, 0, 130),
     BackgroundColor3 = Color3.fromRGB(40, 40, 55),
     BorderSizePixel = 0,
-    Parent = contenu,
+    Parent = panel,
 })
 
 -- ═══════════════════════════════════════════════
@@ -453,7 +359,7 @@ local function creerSlider(parent, texte, min, max, defaut, yPos, callback)
 
     local piste = creer("Frame", {
         Size = UDim2.new(1, -28, 0, 8),
-        Position = UDim2.new(0, 14, 0, yPos + 22),
+        Position = UDim2.new(0, 14, 0, yPos + 20),
         BackgroundColor3 = Color3.fromRGB(35, 35, 48),
         Parent = parent,
     })
@@ -476,11 +382,8 @@ local function creerSlider(parent, texte, min, max, defaut, yPos, callback)
     coins(curseur, 9)
 
     local enDrag = false
-
-    local function majSlider(posX)
-        local absPos = piste.AbsolutePosition.X
-        local absSize = piste.AbsoluteSize.X
-        local rel = math.clamp((posX - absPos) / absSize, 0, 1)
+    local function maj(posX)
+        local rel = math.clamp((posX - piste.AbsolutePosition.X) / piste.AbsoluteSize.X, 0, 1)
         local val = math.floor(min + rel * (max - min) + 0.5)
         remplissage.Size = UDim2.new(rel, 0, 1, 0)
         curseur.Position = UDim2.new(rel, -9, 0.5, -9)
@@ -489,20 +392,9 @@ local function creerSlider(parent, texte, min, max, defaut, yPos, callback)
     end
 
     curseur.MouseButton1Down:Connect(function() enDrag = true end)
-    piste.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            enDrag = true
-            majSlider(input.Position.X)
-        end
-    end)
-    UIS.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then enDrag = false end
-    end)
-    UIS.InputChanged:Connect(function(input)
-        if enDrag and input.UserInputType == Enum.UserInputType.MouseMovement then
-            majSlider(input.Position.X)
-        end
-    end)
+    piste.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then enDrag = true; maj(i.Position.X) end end)
+    UIS.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then enDrag = false end end)
+    UIS.InputChanged:Connect(function(i) if enDrag and i.UserInputType == Enum.UserInputType.MouseMovement then maj(i.Position.X) end end)
 end
 
 -- ═══════════════════════════════════════════════
@@ -520,7 +412,6 @@ local function creerToggle(parent, texte, defaut, yPos, callback)
         TextXAlignment = Enum.TextXAlignment.Left,
         Parent = parent,
     })
-
     local fond = creer("Frame", {
         Size = UDim2.new(0, 38, 0, 20),
         Position = UDim2.new(1, -52, 0, yPos + 1),
@@ -528,7 +419,6 @@ local function creerToggle(parent, texte, defaut, yPos, callback)
         Parent = parent,
     })
     coins(fond, 10)
-
     local point = creer("Frame", {
         Size = UDim2.new(0, 16, 0, 16),
         Position = defaut and UDim2.new(1, -18, 0, 2) or UDim2.new(0, 2, 0, 2),
@@ -536,26 +426,16 @@ local function creerToggle(parent, texte, defaut, yPos, callback)
         Parent = fond,
     })
     coins(point, 8)
-
     local etat = defaut
-    creer("TextButton", {
-        Size = UDim2.new(1, 0, 1, 0),
-        BackgroundTransparency = 1,
-        Text = "",
-        Parent = fond,
-    }).MouseButton1Click:Connect(function()
+    creer("TextButton", {Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Text = "", Parent = fond})
+    .MouseButton1Click:Connect(function()
         etat = not etat
-        TweenService:Create(fond, TweenInfo.new(0.15), {
-            BackgroundColor3 = etat and Color3.fromRGB(90, 130, 255) or Color3.fromRGB(45, 45, 58),
-        }):Play()
-        TweenService:Create(point, TweenInfo.new(0.15), {
-            Position = etat and UDim2.new(1, -18, 0, 2) or UDim2.new(0, 2, 0, 2),
-        }):Play()
+        TweenService:Create(fond, TweenInfo.new(0.15), {BackgroundColor3 = etat and Color3.fromRGB(90, 130, 255) or Color3.fromRGB(45, 45, 58)}):Play()
+        TweenService:Create(point, TweenInfo.new(0.15), {Position = etat and UDim2.new(1, -18, 0, 2) or UDim2.new(0, 2, 0, 2)}):Play()
         callback(etat)
     end)
-
-    return function(val)
-        etat = val
+    return function(v)
+        etat = v
         fond.BackgroundColor3 = etat and Color3.fromRGB(90, 130, 255) or Color3.fromRGB(45, 45, 58)
         point.Position = etat and UDim2.new(1, -18, 0, 2) or UDim2.new(0, 2, 0, 2)
     end
@@ -565,8 +445,8 @@ end
 --  BOUTON
 -- ═══════════════════════════════════════════════
 local function creerBouton(parent, texte, couleur, yPos, callback)
-    local btn = creer("TextButton", {
-        Size = UDim2.new(1, -28, 0, 30),
+    local b = creer("TextButton", {
+        Size = UDim2.new(1, -28, 0, 28),
         Position = UDim2.new(0, 14, 0, yPos),
         BackgroundColor3 = couleur,
         Text = texte,
@@ -575,110 +455,70 @@ local function creerBouton(parent, texte, couleur, yPos, callback)
         TextSize = 12,
         Parent = parent,
     })
-    coins(btn, 6)
-    btn.MouseButton1Click:Connect(callback)
-    return btn
+    coins(b, 6)
+    b.MouseButton1Click:Connect(callback)
 end
 
 -- ═══════════════════════════════════════════════
 --  CREER LES CONTROLES
 -- ═══════════════════════════════════════════════
-creerSlider(contenu, "Distance Parry", 0, 100, Config.DistanceParry, 74, function(v)
-    Config.DistanceParry = v
-end)
+creerSlider(panel, "Distance Parry", 0, 100, Config.DistanceParry, 140, function(v) Config.DistanceParry = v end)
+creerSlider(panel, "Distance Minimum", 0, 50, Config.DistanceMin, 178, function(v) Config.DistanceMin = v end)
+creerSlider(panel, "Delai (ms)", 0, 500, Config.Delai, 216, function(v) Config.Delai = v end)
 
-creerSlider(contenu, "Distance Minimum", 0, 50, Config.DistanceMin, 114, function(v)
-    Config.DistanceMin = v
-end)
-
-creerSlider(contenu, "Delai (ms)", 0, 500, Config.Delai, 154, function(v)
-    Config.Delai = v
-end)
-
-local majToggle = creerToggle(contenu, "Auto Parry", Config.Active, 198, function(v)
+local majToggle = creerToggle(panel, "Auto Parry", Config.Active, 256, function(v)
     Config.Active = v
     lblStatut.Text = v and "ACTIF" or "DESACTIVE"
     lblStatut.TextColor3 = v and Color3.fromRGB(0, 210, 80) or Color3.fromRGB(210, 50, 50)
 end)
 
-creerToggle(contenu, "Mode Debug", Config.ModeDebug, 228, function(v)
-    Config.ModeDebug = v
-    lblLog.Visible = v
-end)
-
 creer("Frame", {
     Size = UDim2.new(1, -28, 0, 1),
-    Position = UDim2.new(0, 14, 0, 260),
+    Position = UDim2.new(0, 14, 0, 290),
     BackgroundColor3 = Color3.fromRGB(40, 40, 55),
     BorderSizePixel = 0,
-    Parent = contenu,
+    Parent = panel,
 })
 
-creerBouton(contenu, "Scanner le Jeu (voir console F9)", Color3.fromRGB(50, 40, 20), 270, function()
-    scannerJeu()
-end)
-
-creerBouton(contenu, "Re-chercher Remote", Color3.fromRGB(30, 30, 50), 308, function()
-    remoteTrouve = nil
-    chercherRemote()
-end)
-
-creerBouton(contenu, "Re-chercher Balle", Color3.fromRGB(30, 30, 50), 346, function()
+creerBouton(panel, "Scanner le Jeu (console F9)", Color3.fromRGB(50, 40, 20), 300, scannerJeu)
+creerBouton(panel, "Re-chercher la Balle", Color3.fromRGB(30, 30, 50), 336, function()
     balleCachee = nil
     for _, v in pairs(workspace:GetDescendants()) do
         if estUneBalle(v) then
             balleCachee = v
-            log("Balle re-trouvee: " .. v:GetFullName())
-            break
+            log("Balle: " .. v:GetFullName())
+            return
         end
     end
-    if not balleCachee then log("Aucune balle trouvee") end
+    log("Aucune balle !")
 end)
 
 creer("TextLabel", {
     Size = UDim2.new(1, -28, 0, 45),
-    Position = UDim2.new(0, 14, 0, 385),
+    Position = UDim2.new(0, 14, 0, 375),
     BackgroundTransparency = 1,
-    Text = "RShift = Activer/Desactiver\nRCtrl  = Cacher/Montrer le panel",
+    Text = "RShift = Activer/Desactiver\nRCtrl  = Cacher/Montrer",
     TextColor3 = Color3.fromRGB(90, 90, 110),
     Font = Enum.Font.Gotham,
     TextSize = 11,
     TextXAlignment = Enum.TextXAlignment.Left,
     LineHeight = 1.6,
-    Parent = contenu,
+    Parent = panel,
 })
 
 -- ═══════════════════════════════════════════════
 --  DRAG
 -- ═══════════════════════════════════════════════
-local debutDrag, posDepart
-
-barre.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        debutDrag = input.Position
-        posDepart = panel.Position
-    end
-end)
-
-barre.InputChanged:Connect(function(input)
-    if debutDrag and input.UserInputType == Enum.UserInputType.MouseMovement then
-        local delta = input.Position - debutDrag
-        panel.Position = UDim2.new(
-            posDepart.X.Scale, posDepart.X.Offset + delta.X,
-            posDepart.Y.Scale, posDepart.Y.Offset + delta.Y
-        )
-    end
-end)
-
-UIS.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then debutDrag = nil end
-end)
+local dd, sp
+barre.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then dd = i.Position; sp = panel.Position end end)
+barre.InputChanged:Connect(function(i) if dd and i.UserInputType == Enum.UserInputType.MouseMovement then local d = i.Position - dd; panel.Position = UDim2.new(sp.X.Scale, sp.X.Offset + d.X, sp.Y.Scale, sp.Y.Offset + d.Y) end end)
+UIS.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then dd = nil end end)
 
 -- ═══════════════════════════════════════════════
 --  RACCOURCIS
 -- ═══════════════════════════════════════════════
-UIS.InputBegan:Connect(function(input, traite)
-    if traite then return end
+UIS.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
     if input.KeyCode == Config.ToucheToggle then
         Config.Active = not Config.Active
         majToggle(Config.Active)
@@ -695,21 +535,14 @@ gui.Parent = LP:WaitForChild("PlayerGui")
 --  BOUCLE PRINCIPALE
 -- ═══════════════════════════════════════════════
 RunService.Heartbeat:Connect(function()
-    -- Maj affichage
-    lblStats.Text = "Parrys: " .. compteurParry
-        .. "\nBalle: " .. (balleCachee and balleCachee.Parent and "OUI" or "NON")
-        .. "  |  Remote: " .. (remoteTrouve and remoteTrouve.Name or "mouse1click")
+    local balleOK = balleCachee and balleCachee.Parent and true or false
 
-    if Config.ModeDebug and #logMessages > 0 then
-        local txt = ""
-        for i = math.max(1, #logMessages - 6), #logMessages do
-            txt = txt .. logMessages[i] .. "\n"
-        end
-        lblLog.Text = txt
-    end
+    lblStats.Text = "Parrys: " .. compteurParry
+        .. "\nBalle: " .. (balleOK and "OUI" or "NON") .. "  |  Methode: mouse1click"
+    lblLog.Text = dernierLog
 
     if not Config.Active then return end
-    if not balleCachee or not balleCachee.Parent then return end
+    if not balleOK then return end
 
     local versMoi, dist = balleVersJoueur(balleCachee)
     if not versMoi then return end
@@ -723,10 +556,10 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- Scan au demarrage
+-- Scanner au demarrage
 task.spawn(function()
-    task.wait(2)
+    task.wait(3)
     scannerJeu()
 end)
 
-log("Script charge ! Ouvre la console (F9) pour voir les details")
+log("v5 charge - mouse1click uniquement")

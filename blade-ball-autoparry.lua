@@ -1,4 +1,4 @@
--- Auto Parry v10.1
+-- Auto Parry v11
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -8,7 +8,7 @@ local LP = Players.LocalPlayer
 
 local function rkey()
     local s = ""
-    for _ = 1, 12 do s = s .. string.char(math.random(97,122)) end
+    for _ = 1, 16 do s = s .. string.char(math.random(97,122)) end
     return s
 end
 local RENDER_KEY = rkey()
@@ -19,8 +19,8 @@ local RENDER_KEY = rkey()
 local C = {
     Active = true,
     Mode = 1,
-    DistanceParry = 18,
-    Sensibilite = 0.2,
+    DistanceParry = 20,
+    Sensibilite = 0.12,
     AntiAFK = true,
     FlashParry = true,
     KToggle = Enum.KeyCode.RightShift,
@@ -32,35 +32,55 @@ local dernierP = 0
 local compteur = 0
 local streak = 0
 local best = 0
-local derLog = ""
+local derLog = "En attente..."
 local vBalle = 0
 local dBalle = 0
 local cible = false
 local ouvert = true
 local onglet = 1
-local COOLDOWN = 0.25
+local COOLDOWN = 0.18
+local cachedHRP = nil
+local cachedChar = nil
 
 local function log(m) derLog = m end
 
 -- ═══════════════════════════════════════════════
 --  COULEURS
 -- ═══════════════════════════════════════════════
-local ACCENT = Color3.fromRGB(90, 120, 255)
-local GREEN  = Color3.fromRGB(45, 210, 90)
-local RED    = Color3.fromRGB(230, 55, 55)
-local ORANGE = Color3.fromRGB(255, 165, 40)
-local YELLOW = Color3.fromRGB(255, 220, 50)
-local BG1    = Color3.fromRGB(10, 10, 16)
-local BG2    = Color3.fromRGB(16, 16, 24)
-local BG3    = Color3.fromRGB(22, 22, 32)
-local BG4    = Color3.fromRGB(30, 30, 42)
-local BORDER = Color3.fromRGB(38, 38, 55)
-local TEXT1  = Color3.fromRGB(225, 225, 240)
-local TEXT2  = Color3.fromRGB(150, 150, 175)
-local TEXT3  = Color3.fromRGB(90, 90, 115)
+local ACCENT  = Color3.fromRGB(100, 130, 255)
+local ACCENT2 = Color3.fromRGB(70, 100, 230)
+local GREEN   = Color3.fromRGB(50, 215, 95)
+local RED     = Color3.fromRGB(235, 60, 60)
+local ORANGE  = Color3.fromRGB(255, 170, 45)
+local YELLOW  = Color3.fromRGB(255, 225, 55)
+local CYAN    = Color3.fromRGB(80, 220, 255)
+local BG1     = Color3.fromRGB(12, 12, 20)
+local BG2     = Color3.fromRGB(18, 18, 28)
+local BG3     = Color3.fromRGB(24, 24, 36)
+local BG4     = Color3.fromRGB(32, 32, 46)
+local BG5     = Color3.fromRGB(40, 40, 56)
+local BORDER  = Color3.fromRGB(45, 45, 65)
+local TEXT1   = Color3.fromRGB(235, 235, 250)
+local TEXT2   = Color3.fromRGB(160, 160, 185)
+local TEXT3   = Color3.fromRGB(100, 100, 130)
 
 -- ═══════════════════════════════════════════════
---  DETECTION BALLE
+--  CACHE PERSONNAGE (evite FindFirstChild chaque frame)
+-- ═══════════════════════════════════════════════
+local function updateCharCache()
+    cachedChar = LP.Character
+    cachedHRP = cachedChar and cachedChar:FindFirstChild("HumanoidRootPart")
+end
+updateCharCache()
+LP.CharacterAdded:Connect(function(c)
+    cachedChar = c
+    c:WaitForChild("HumanoidRootPart", 5)
+    cachedHRP = c:FindFirstChild("HumanoidRootPart")
+end)
+LP.CharacterRemoving:Connect(function() cachedChar = nil; cachedHRP = nil end)
+
+-- ═══════════════════════════════════════════════
+--  DETECTION BALLE — rapide
 -- ═══════════════════════════════════════════════
 local function estJoueur(o)
     local p = o.Parent
@@ -87,7 +107,7 @@ local function chercheBalle()
         if (v:IsA("BasePart") or v:IsA("MeshPart")) and not estJoueur(v) and not v.Anchored then
             if v.Name ~= "Baseplate" and v.Name ~= "Terrain" then
                 local s, vel = pcall(function() return v.AssemblyLinearVelocity end)
-                if s and vel and vel.Magnitude > 30 and v.Size.Magnitude < 15 then return v end
+                if s and vel and vel.Magnitude > 25 and v.Size.Magnitude < 15 then return v end
             end
         end
     end
@@ -111,40 +131,44 @@ if balle then log("Balle trouvee: " .. balle.Name) end
 
 task.spawn(function()
     while true do
-        task.wait(0.3)
+        task.wait(0.2)
         if not balle or not balle.Parent then balle = chercheBalle() end
     end
 end)
 
 -- ═══════════════════════════════════════════════
---  DETECTION CIBLE
+--  DETECTION CIBLE — ultra optimise
 -- ═══════════════════════════════════════════════
-local function getHRP()
-    local c = LP.Character
-    return c and c:FindFirstChild("HumanoidRootPart")
-end
-
 local attrNoms = {"Target","target","realTarget","RealTarget","CurrentTarget","currentTarget","TargetPlayer","targetPlayer","PlayerTarget"}
 
 local function checkCible(b)
-    local hrp = getHRP()
+    local hrp = cachedHRP
+    if not hrp then updateCharCache(); hrp = cachedHRP end
     if not hrp then return false, 999, 0 end
 
-    local pos = b.Position
-    local d = (pos - hrp.Position).Magnitude
+    local bPos = b.Position
+    local hPos = hrp.Position
+    local dx = bPos.X - hPos.X
+    local dy = bPos.Y - hPos.Y
+    local dz = bPos.Z - hPos.Z
+    local d = math.sqrt(dx*dx + dy*dy + dz*dz)
+
     local s1, vel = pcall(function() return b.AssemblyLinearVelocity end)
     if not s1 then s1, vel = pcall(function() return b.Velocity end) end
     local spd = (s1 and vel) and vel.Magnitude or 0
 
+    -- 1) Attributs (le plus fiable et rapide)
     local sources = {b}
-    if b.Parent and b.Parent ~= workspace then sources[2] = b.Parent end
+    local par = b.Parent
+    if par and par ~= workspace then sources[2] = par end
 
-    for _, src in pairs(sources) do
-        for _, nom in pairs(attrNoms) do
-            local ok2, t = pcall(function() return src:GetAttribute(nom) end)
+    for si = 1, #sources do
+        local src = sources[si]
+        for ai = 1, #attrNoms do
+            local ok2, t = pcall(function() return src:GetAttribute(attrNoms[ai]) end)
             if ok2 and t ~= nil then
                 local m = false
-                if typeof(t) == "Instance" then m = (t == LP.Character or t == LP)
+                if typeof(t) == "Instance" then m = (t == cachedChar or t == LP)
                 elseif typeof(t) == "string" then m = (t == LP.Name or t == tostring(LP.UserId))
                 elseif typeof(t) == "number" then m = (t == LP.UserId) end
                 return m, d, spd
@@ -152,23 +176,36 @@ local function checkCible(b)
         end
     end
 
+    -- 2) ObjectValue
     for _, ch in pairs(b:GetChildren()) do
         if ch:IsA("ObjectValue") and ch.Value then
-            return (ch.Value == LP.Character or ch.Value == LP), d, spd
+            return (ch.Value == cachedChar or ch.Value == LP), d, spd
         end
     end
 
-    if s1 and vel and spd > 8 then
-        local dir = (hrp.Position - pos).Unit
-        local dot = vel.Unit:Dot(dir)
-        if dot > C.Sensibilite then return true, d, spd end
+    -- 3) Velocite (seuil tres bas = detecte TRES vite)
+    if s1 and vel and spd > 5 then
+        local dirX = hPos.X - bPos.X
+        local dirY = hPos.Y - bPos.Y
+        local dirZ = hPos.Z - bPos.Z
+        local dirMag = math.sqrt(dirX*dirX + dirY*dirY + dirZ*dirZ)
+        if dirMag > 0.01 then
+            dirX = dirX / dirMag
+            dirY = dirY / dirMag
+            dirZ = dirZ / dirMag
+            local velMag = vel.Magnitude
+            if velMag > 0.01 then
+                local dot = (vel.X/velMag)*dirX + (vel.Y/velMag)*dirY + (vel.Z/velMag)*dirZ
+                if dot > C.Sensibilite then return true, d, spd end
+            end
+        end
     end
 
     return false, d, spd
 end
 
 -- ═══════════════════════════════════════════════
---  PARRY
+--  PARRY — 1 clic, timing parfait
 -- ═══════════════════════════════════════════════
 local flashFrame = nil
 
@@ -184,24 +221,34 @@ local function parry()
 
     if C.FlashParry and flashFrame then
         pcall(function()
-            flashFrame.BackgroundTransparency = 0.85
+            flashFrame.BackgroundTransparency = 0.82
             TweenService:Create(flashFrame, TweenInfo.new(0.12), {BackgroundTransparency = 1}):Play()
         end)
     end
 
-    log("PARRY #" .. compteur .. " d=" .. math.floor(dBalle) .. " v=" .. math.floor(vBalle))
+    log("PARRY #" .. compteur .. " | dist=" .. math.floor(dBalle) .. " vit=" .. math.floor(vBalle))
 end
 
 local function doitParry(d, spd)
     if C.Mode == 1 then
-        local seuil = math.clamp(8 + spd * 0.1, 8, 50)
+        -- AGRESSIF : distance dynamique selon vitesse
+        -- Balle lente (0-50) : parry a 10-13 studs
+        -- Balle moyenne (50-150) : parry a 13-23 studs
+        -- Balle rapide (150-300) : parry a 23-38 studs
+        -- Balle ultra (300+) : parry a 38-55 studs
+        local seuil = math.clamp(10 + spd * 0.09, 10, 55)
         return d <= seuil
+
     elseif C.Mode == 2 then
-        if spd < 3 then return false end
-        local tempsImpact = d / spd
-        local seuil = math.clamp(0.15 + (spd / 300), 0.15, 1.5)
-        return tempsImpact <= seuil
+        -- PREDICTIF : temps d'impact
+        if spd < 2 then return false end
+        local ti = d / spd
+        -- Plus rapide = on anticipe plus
+        local seuil = math.clamp(0.18 + (spd / 250), 0.18, 2.0)
+        return ti <= seuil
+
     elseif C.Mode == 3 then
+        -- SAFE : distance fixe
         return d <= C.DistanceParry
     end
     return false
@@ -213,9 +260,8 @@ end
 task.spawn(function()
     while true do
         task.wait(180)
-        if C.AntiAFK then
-            local hrp = getHRP()
-            if hrp then pcall(function() hrp.CFrame = hrp.CFrame end) end
+        if C.AntiAFK and cachedHRP then
+            pcall(function() cachedHRP.CFrame = cachedHRP.CFrame end)
         end
     end
 end)
@@ -231,9 +277,7 @@ gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 local function mk(c, p)
     local o = Instance.new(c)
     for k, v in pairs(p) do
-        if k ~= "Parent" then
-            pcall(function() o[k] = v end)
-        end
+        if k ~= "Parent" then pcall(function() o[k] = v end) end
     end
     if p.Parent then o.Parent = p.Parent end
     return o
@@ -246,75 +290,86 @@ flashFrame = mk("Frame", {
     BackgroundTransparency = 1, ZIndex = 100, Parent = gui,
 })
 
--- ═══════ PANEL ═══════
-local W, H_OPEN, H_CLOSED = 320, 560, 48
+-- ═══════════════════════════════════════════════
+--  PANEL — 380x640 (plus grand)
+-- ═══════════════════════════════════════════════
+local W, H_OPEN, H_CLOSED = 380, 640, 52
 
 local panel = mk("Frame", {
     Size = UDim2.new(0, W, 0, H_OPEN),
     Position = UDim2.new(0, 16, 0.5, -H_OPEN/2),
-    BackgroundColor3 = BG1, BackgroundTransparency = 0.03,
+    BackgroundColor3 = BG1, BackgroundTransparency = 0.02,
     ClipsDescendants = true, Parent = gui,
 })
-rnd(panel, 16)
-str(panel, BORDER, 1.5)
+rnd(panel, 14)
+str(panel, BORDER, 1)
 
--- ═══════ HEADER ═══════
-local hdr = mk("Frame", {Size = UDim2.new(1,0,0,48), BackgroundColor3 = BG2, Parent = panel})
-rnd(hdr, 16)
-mk("Frame", {Size = UDim2.new(1,-32,0,3), Position = UDim2.new(0,16,0,0), BackgroundColor3 = ACCENT, Parent = hdr})
+-- ═══════════════════════════════════════════════
+--  HEADER — 52px
+-- ═══════════════════════════════════════════════
+local hdr = mk("Frame", {Size = UDim2.new(1,0,0,52), BackgroundColor3 = BG2, Parent = panel})
+rnd(hdr, 14)
 
-local iconBg = mk("Frame", {Size = UDim2.new(0,28,0,28), Position = UDim2.new(0,14,0,12), BackgroundColor3 = ACCENT, Parent = hdr})
-rnd(iconBg, 14)
-mk("TextLabel", {Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Text = "AP", TextColor3 = TEXT1, Font = Enum.Font.GothamBold, TextSize = 11, Parent = iconBg})
+-- Barre accent
+mk("Frame", {Size = UDim2.new(1,-30,0,3), Position = UDim2.new(0,15,0,0), BackgroundColor3 = ACCENT, Parent = hdr})
 
+-- Icone
+local iconBg = mk("Frame", {Size = UDim2.new(0,34,0,34), Position = UDim2.new(0,14,0,10), BackgroundColor3 = ACCENT, Parent = hdr})
+rnd(iconBg, 17)
+mk("TextLabel", {Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Text = "AP", TextColor3 = TEXT1, Font = Enum.Font.GothamBold, TextSize = 13, Parent = iconBg})
+
+-- Titre
 mk("TextLabel", {
-    Size = UDim2.new(1,-120,0,16), Position = UDim2.new(0,50,0,10),
+    Size = UDim2.new(1,-140,0,20), Position = UDim2.new(0,56,0,8),
     BackgroundTransparency = 1, Text = "AUTO PARRY",
-    TextColor3 = TEXT1, Font = Enum.Font.GothamBold, TextSize = 15,
+    TextColor3 = TEXT1, Font = Enum.Font.GothamBold, TextSize = 18,
     TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr,
 })
 mk("TextLabel", {
-    Size = UDim2.new(1,-120,0,12), Position = UDim2.new(0,50,0,27),
-    BackgroundTransparency = 1, Text = "v10.1",
-    TextColor3 = TEXT3, Font = Enum.Font.Gotham, TextSize = 9,
+    Size = UDim2.new(1,-140,0,14), Position = UDim2.new(0,56,0,29),
+    BackgroundTransparency = 1, Text = "v11 | Indetectable | Reactif",
+    TextColor3 = TEXT3, Font = Enum.Font.Gotham, TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr,
 })
 
+-- Bouton minimiser
 local btnMin = mk("TextButton", {
-    Size = UDim2.new(0,32,0,32), Position = UDim2.new(1,-46,0,8),
+    Size = UDim2.new(0,36,0,36), Position = UDim2.new(1,-50,0,8),
     BackgroundColor3 = BG4, Text = "-",
-    TextColor3 = TEXT2, Font = Enum.Font.GothamBold, TextSize = 16, Parent = hdr,
+    TextColor3 = TEXT2, Font = Enum.Font.GothamBold, TextSize = 18, Parent = hdr,
 })
 rnd(btnMin, 10)
 btnMin.MouseButton1Click:Connect(function()
     ouvert = not ouvert
     btnMin.Text = ouvert and "-" or "+"
-    TweenService:Create(panel, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+    TweenService:Create(panel, TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
         Size = UDim2.new(0, W, 0, ouvert and H_OPEN or H_CLOSED)
     }):Play()
 end)
 
--- ═══════ ONGLETS ═══════
-local tabBar = mk("Frame", {Size = UDim2.new(1,-24,0,32), Position = UDim2.new(0,12,0,52), BackgroundColor3 = BG3, Parent = panel})
+-- ═══════════════════════════════════════════════
+--  ONGLETS — 36px
+-- ═══════════════════════════════════════════════
+local tabBar = mk("Frame", {Size = UDim2.new(1,-28,0,36), Position = UDim2.new(0,14,0,56), BackgroundColor3 = BG3, Parent = panel})
 rnd(tabBar, 10)
 
-local tabNames = {"Statut", "Config", "Extra"}
+local tabNames = {"Statut", "Reglages", "Extra"}
 local tabBtns = {}
 local pagesList = {}
 
 for i, name in ipairs(tabNames) do
     local btn = mk("TextButton", {
-        Size = UDim2.new(1/3,-4,1,-4), Position = UDim2.new((i-1)/3,2,0,2),
+        Size = UDim2.new(1/3,-4,1,-6), Position = UDim2.new((i-1)/3,2,0,3),
         BackgroundColor3 = i==1 and ACCENT or BG3, BackgroundTransparency = i==1 and 0 or 1,
         Text = name, TextColor3 = i==1 and TEXT1 or TEXT3,
-        Font = Enum.Font.GothamBold, TextSize = 11, Parent = tabBar,
+        Font = Enum.Font.GothamBold, TextSize = 12, Parent = tabBar,
     })
     rnd(btn, 8)
     tabBtns[i] = btn
 
     local page = mk("ScrollingFrame", {
-        Size = UDim2.new(1,0,1,-88), Position = UDim2.new(0,0,0,88),
-        BackgroundTransparency = 1, ScrollBarThickness = 2,
+        Size = UDim2.new(1,0,1,-96), Position = UDim2.new(0,0,0,96),
+        BackgroundTransparency = 1, ScrollBarThickness = 3,
         ScrollBarImageColor3 = ACCENT, CanvasSize = UDim2.new(0,0,0,0),
         Visible = i==1, Parent = panel,
     })
@@ -333,32 +388,34 @@ for i, name in ipairs(tabNames) do
     end)
 end
 
--- ═══════ COMPOSANTS ═══════
+-- ═══════════════════════════════════════════════
+--  COMPOSANTS
+-- ═══════════════════════════════════════════════
 local function card(parent, y, h)
-    local c = mk("Frame", {Size = UDim2.new(1,-24,0,h), Position = UDim2.new(0,12,0,y), BackgroundColor3 = BG2, Parent = parent})
-    rnd(c, 10)
+    local c = mk("Frame", {Size = UDim2.new(1,-28,0,h), Position = UDim2.new(0,14,0,y), BackgroundColor3 = BG2, Parent = parent})
+    rnd(c, 12)
     str(c, BORDER, 0.5)
     return c
 end
 
-local function sectionTitle(parent, y, t)
-    mk("TextLabel", {Size = UDim2.new(1,-28,0,12), Position = UDim2.new(0,14,0,y), BackgroundTransparency = 1, Text = string.upper(t), TextColor3 = ACCENT, Font = Enum.Font.GothamBold, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, Parent = parent})
+local function section(parent, y, t)
+    mk("TextLabel", {Size = UDim2.new(1,-28,0,14), Position = UDim2.new(0,14,0,y), BackgroundTransparency = 1, Text = string.upper(t), TextColor3 = ACCENT, Font = Enum.Font.GothamBold, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = parent})
 end
 
 local function makeSlider(parent, y, label, desc, min, max, def, unit, cb)
-    mk("TextLabel", {Size = UDim2.new(1,-60,0,13), Position = UDim2.new(0,12,0,y), BackgroundTransparency = 1, Text = label, TextColor3 = TEXT1, Font = Enum.Font.Gotham, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = parent})
-    local vl = mk("TextLabel", {Size = UDim2.new(0,48,0,13), Position = UDim2.new(1,-58,0,y), BackgroundTransparency = 1, Text = tostring(def)..(unit or ""), TextColor3 = ACCENT, Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Right, Parent = parent})
-    local dy = y + 15
+    mk("TextLabel", {Size = UDim2.new(1,-70,0,15), Position = UDim2.new(0,14,0,y), BackgroundTransparency = 1, Text = label, TextColor3 = TEXT1, Font = Enum.Font.Gotham, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = parent})
+    local vl = mk("TextLabel", {Size = UDim2.new(0,54,0,15), Position = UDim2.new(1,-66,0,y), BackgroundTransparency = 1, Text = tostring(def)..(unit or ""), TextColor3 = ACCENT, Font = Enum.Font.GothamBold, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Right, Parent = parent})
+    local dy = y + 17
     if desc then
-        mk("TextLabel", {Size = UDim2.new(1,-24,0,11), Position = UDim2.new(0,12,0,dy), BackgroundTransparency = 1, Text = desc, TextColor3 = TEXT3, Font = Enum.Font.Gotham, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, Parent = parent})
-        dy = dy + 13
+        mk("TextLabel", {Size = UDim2.new(1,-28,0,12), Position = UDim2.new(0,14,0,dy), BackgroundTransparency = 1, Text = desc, TextColor3 = TEXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = parent})
+        dy = dy + 14
     end
-    local tr = mk("Frame", {Size = UDim2.new(1,-24,0,6), Position = UDim2.new(0,12,0,dy+2), BackgroundColor3 = BG4, Parent = parent})
-    rnd(tr, 3)
+    local tr = mk("Frame", {Size = UDim2.new(1,-28,0,8), Position = UDim2.new(0,14,0,dy+3), BackgroundColor3 = BG4, Parent = parent})
+    rnd(tr, 4)
     local fl = mk("Frame", {Size = UDim2.new((def-min)/(max-min),0,1,0), BackgroundColor3 = ACCENT, Parent = tr})
-    rnd(fl, 3)
-    local kn = mk("TextButton", {Size = UDim2.new(0,16,0,16), Position = UDim2.new((def-min)/(max-min),-8,0.5,-8), BackgroundColor3 = Color3.fromRGB(240,240,252), Text = "", Parent = tr})
-    rnd(kn, 8)
+    rnd(fl, 4)
+    local kn = mk("TextButton", {Size = UDim2.new(0,18,0,18), Position = UDim2.new((def-min)/(max-min),-9,0.5,-9), BackgroundColor3 = Color3.fromRGB(242,242,255), Text = "", Parent = tr})
+    rnd(kn, 9)
     mk("UIStroke", {Color = ACCENT, Thickness = 2, Parent = kn})
     local drag = false
     local function up(px)
@@ -366,7 +423,7 @@ local function makeSlider(parent, y, label, desc, min, max, def, unit, cb)
         local v
         if max >= 10 then v = math.floor(min + r*(max-min) + 0.5) else v = math.floor((min + r*(max-min)) * 100 + 0.5) / 100 end
         fl.Size = UDim2.new(r,0,1,0)
-        kn.Position = UDim2.new(r,-8,0.5,-8)
+        kn.Position = UDim2.new(r,-9,0.5,-9)
         vl.Text = tostring(v)..(unit or "")
         cb(v)
     end
@@ -377,157 +434,192 @@ local function makeSlider(parent, y, label, desc, min, max, def, unit, cb)
 end
 
 local function makeToggle(parent, y, label, desc, def, cb)
-    mk("TextLabel", {Size = UDim2.new(1,-64,0,13), Position = UDim2.new(0,12,0,y), BackgroundTransparency = 1, Text = label, TextColor3 = TEXT1, Font = Enum.Font.Gotham, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = parent})
-    if desc then mk("TextLabel", {Size = UDim2.new(1,-64,0,10), Position = UDim2.new(0,12,0,y+14), BackgroundTransparency = 1, Text = desc, TextColor3 = TEXT3, Font = Enum.Font.Gotham, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, Parent = parent}) end
-    local bg = mk("Frame", {Size = UDim2.new(0,40,0,22), Position = UDim2.new(1,-54,0,y), BackgroundColor3 = def and ACCENT or BG4, Parent = parent})
-    rnd(bg, 11)
-    local dot = mk("Frame", {Size = UDim2.new(0,16,0,16), Position = def and UDim2.new(1,-19,0,3) or UDim2.new(0,3,0,3), BackgroundColor3 = Color3.fromRGB(245,245,255), Parent = bg})
-    rnd(dot, 8)
+    mk("TextLabel", {Size = UDim2.new(1,-70,0,15), Position = UDim2.new(0,14,0,y), BackgroundTransparency = 1, Text = label, TextColor3 = TEXT1, Font = Enum.Font.Gotham, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = parent})
+    if desc then mk("TextLabel", {Size = UDim2.new(1,-70,0,12), Position = UDim2.new(0,14,0,y+16), BackgroundTransparency = 1, Text = desc, TextColor3 = TEXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = parent}) end
+    local bg = mk("Frame", {Size = UDim2.new(0,44,0,24), Position = UDim2.new(1,-58,0,y), BackgroundColor3 = def and ACCENT or BG5, Parent = parent})
+    rnd(bg, 12)
+    local dot = mk("Frame", {Size = UDim2.new(0,18,0,18), Position = def and UDim2.new(1,-21,0,3) or UDim2.new(0,3,0,3), BackgroundColor3 = Color3.fromRGB(248,248,255), Parent = bg})
+    rnd(dot, 9)
     local state = def
     mk("TextButton", {Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Text = "", Parent = bg}).MouseButton1Click:Connect(function()
         state = not state
-        TweenService:Create(bg, TweenInfo.new(0.15, Enum.EasingStyle.Quart), {BackgroundColor3 = state and ACCENT or BG4}):Play()
-        TweenService:Create(dot, TweenInfo.new(0.15, Enum.EasingStyle.Quart), {Position = state and UDim2.new(1,-19,0,3) or UDim2.new(0,3,0,3)}):Play()
+        TweenService:Create(bg, TweenInfo.new(0.15, Enum.EasingStyle.Quart), {BackgroundColor3 = state and ACCENT or BG5}):Play()
+        TweenService:Create(dot, TweenInfo.new(0.15, Enum.EasingStyle.Quart), {Position = state and UDim2.new(1,-21,0,3) or UDim2.new(0,3,0,3)}):Play()
         cb(state)
     end)
-    return function(v) state=v; bg.BackgroundColor3=v and ACCENT or BG4; dot.Position=v and UDim2.new(1,-19,0,3) or UDim2.new(0,3,0,3) end
+    return function(v) state=v; bg.BackgroundColor3=v and ACCENT or BG5; dot.Position=v and UDim2.new(1,-21,0,3) or UDim2.new(0,3,0,3) end
 end
 
 local function makeButton(parent, y, label, color, cb)
-    local b = mk("TextButton", {Size = UDim2.new(1,-24,0,30), Position = UDim2.new(0,12,0,y), BackgroundColor3 = color or BG4, Text = label, TextColor3 = TEXT1, Font = Enum.Font.GothamBold, TextSize = 11, Parent = parent})
+    local b = mk("TextButton", {Size = UDim2.new(1,-28,0,34), Position = UDim2.new(0,14,0,y), BackgroundColor3 = color or BG4, Text = label, TextColor3 = TEXT1, Font = Enum.Font.GothamBold, TextSize = 12, Parent = parent})
     rnd(b, 8)
     b.MouseButton1Click:Connect(cb)
+    b.MouseEnter:Connect(function() TweenService:Create(b, TweenInfo.new(0.08), {BackgroundTransparency = 0.12}):Play() end)
+    b.MouseLeave:Connect(function() TweenService:Create(b, TweenInfo.new(0.08), {BackgroundTransparency = 0}):Play() end)
 end
 
--- ═══════ PAGE 1 : STATUT ═══════
+-- ═══════════════════════════════════════════════
+--  PAGE 1 : STATUT
+-- ═══════════════════════════════════════════════
 local p1 = pagesList[1]
 
-local statusCard = card(p1, 6, 44)
-local statusDot = mk("Frame", {Size = UDim2.new(0,10,0,10), Position = UDim2.new(0,14,0,17), BackgroundColor3 = GREEN, Parent = statusCard})
-rnd(statusDot, 5)
-local statusLbl = mk("TextLabel", {Size = UDim2.new(0,120,0,14), Position = UDim2.new(0,30,0,15), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = statusCard})
+-- Statut
+local statusCard = card(p1, 8, 50)
+local statusDot = mk("Frame", {Size = UDim2.new(0,12,0,12), Position = UDim2.new(0,16,0,19), BackgroundColor3 = GREEN, Parent = statusCard})
+rnd(statusDot, 6)
+local statusLbl = mk("TextLabel", {Size = UDim2.new(0,140,0,16), Position = UDim2.new(0,34,0,17), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, Parent = statusCard})
 
 task.spawn(function()
     while true do
         if C.Active then
-            pcall(function() TweenService:Create(statusDot, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundTransparency = 0.4}):Play() end)
-            task.wait(0.8)
-            pcall(function() TweenService:Create(statusDot, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundTransparency = 0}):Play() end)
-            task.wait(0.8)
-        else
-            statusDot.BackgroundTransparency = 0
-            task.wait(0.5)
-        end
+            pcall(function() TweenService:Create(statusDot, TweenInfo.new(0.7, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundTransparency = 0.5}):Play() end)
+            task.wait(0.7)
+            pcall(function() TweenService:Create(statusDot, TweenInfo.new(0.7, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundTransparency = 0}):Play() end)
+            task.wait(0.7)
+        else statusDot.BackgroundTransparency = 0; task.wait(0.4) end
     end
 end)
 
-local function statBox(parent, x, y, w, title)
-    local box = mk("Frame", {Size = UDim2.new(0,w,0,52), Position = UDim2.new(0,x,0,y), BackgroundColor3 = BG2, Parent = parent})
-    rnd(box, 8)
+-- Stats
+local function statBox(parent, x, y, w, title, col)
+    local box = mk("Frame", {Size = UDim2.new(0,w,0,62), Position = UDim2.new(0,x,0,y), BackgroundColor3 = BG2, Parent = parent})
+    rnd(box, 10)
     str(box, BORDER, 0.5)
-    mk("TextLabel", {Size = UDim2.new(1,0,0,10), Position = UDim2.new(0,0,0,6), BackgroundTransparency = 1, Text = string.upper(title), TextColor3 = TEXT3, Font = Enum.Font.GothamBold, TextSize = 8, Parent = box})
-    return mk("TextLabel", {Size = UDim2.new(1,0,0,22), Position = UDim2.new(0,0,0,20), BackgroundTransparency = 1, Text = "0", TextColor3 = TEXT1, Font = Enum.Font.GothamBold, TextSize = 20, Parent = box})
+    mk("TextLabel", {Size = UDim2.new(1,0,0,12), Position = UDim2.new(0,0,0,8), BackgroundTransparency = 1, Text = string.upper(title), TextColor3 = col or TEXT3, Font = Enum.Font.GothamBold, TextSize = 9, Parent = box})
+    return mk("TextLabel", {Size = UDim2.new(1,0,0,26), Position = UDim2.new(0,0,0,24), BackgroundTransparency = 1, Text = "0", TextColor3 = TEXT1, Font = Enum.Font.GothamBold, TextSize = 24, Parent = box})
 end
 
-local lblParrys = statBox(p1, 12, 58, 90, "Parrys")
-local lblStreak = statBox(p1, 108, 58, 90, "Streak")
-local lblBest   = statBox(p1, 204, 58, 90, "Record")
+local bw = math.floor((W - 28 - 20) / 3)
+local lblParrys = statBox(p1, 14, 68, bw, "Parrys", ACCENT)
+local lblStreak = statBox(p1, 14+bw+10, 68, bw, "Streak", ORANGE)
+local lblBest   = statBox(p1, 14+bw*2+20, 68, bw, "Record", YELLOW)
 
-local balleCard = card(p1, 118, 68)
-sectionTitle(balleCard, 8, "Detection balle")
-local lblBS = mk("TextLabel", {Size = UDim2.new(1,-24,0,12), Position = UDim2.new(0,12,0,24), BackgroundTransparency = 1, Text = "Recherche...", TextColor3 = TEXT2, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = balleCard})
-local lblBI = mk("TextLabel", {Size = UDim2.new(1,-24,0,12), Position = UDim2.new(0,12,0,40), BackgroundTransparency = 1, Text = "Vitesse: 0 | Distance: 0 | Cible: non", TextColor3 = TEXT3, Font = Enum.Font.Code, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, Parent = balleCard})
+-- Balle info
+local balleCard = card(p1, 140, 80)
+section(balleCard, 10, "Detection balle")
+local lblBS = mk("TextLabel", {Size = UDim2.new(1,-28,0,14), Position = UDim2.new(0,14,0,28), BackgroundTransparency = 1, Text = "Recherche...", TextColor3 = TEXT2, Font = Enum.Font.Gotham, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = balleCard})
+local lblBI = mk("TextLabel", {Size = UDim2.new(1,-28,0,14), Position = UDim2.new(0,14,0,48), BackgroundTransparency = 1, Text = "Vitesse: 0 | Distance: 0 | Cible: non", TextColor3 = TEXT3, Font = Enum.Font.Code, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = balleCard})
+local lblTI = mk("TextLabel", {Size = UDim2.new(1,-28,0,12), Position = UDim2.new(0,14,0,64), BackgroundTransparency = 1, Text = "", TextColor3 = CYAN, Font = Enum.Font.Code, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, Parent = balleCard})
 
-local modeCard = card(p1, 194, 70)
-sectionTitle(modeCard, 8, "Mode actif")
+-- Mode
+local modeCard = card(p1, 230, 80)
+section(modeCard, 10, "Mode actif")
 local mNoms = {"AGRESSIF", "PREDICTIF", "SAFE"}
-local mDesc = {"Parry instantane. Distance ajustee a la vitesse.", "Timing par temps d'impact. Anticipe quand rapide.", "Distance fixe configurable. Plus prudent."}
+local mDesc = {
+    "Parry instantane. Zone = 10 + vitesse*0.09 studs. Reactif max.",
+    "Timing par temps d'impact. Anticipe selon vitesse. Equilibre.",
+    "Distance fixe. Parry a " .. C.DistanceParry .. " studs. Prudent."
+}
 local mColors = {RED, ACCENT, GREEN}
-local modeLbl = mk("TextLabel", {Size = UDim2.new(1,-24,0,18), Position = UDim2.new(0,12,0,24), BackgroundTransparency = 1, Text = mNoms[C.Mode], TextColor3 = mColors[C.Mode], Font = Enum.Font.GothamBold, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, Parent = modeCard})
-local modeDescLbl = mk("TextLabel", {Size = UDim2.new(1,-24,0,12), Position = UDim2.new(0,12,0,46), BackgroundTransparency = 1, Text = mDesc[C.Mode], TextColor3 = TEXT3, Font = Enum.Font.Gotham, TextSize = 9, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Parent = modeCard})
+local modeLbl = mk("TextLabel", {Size = UDim2.new(1,-28,0,20), Position = UDim2.new(0,14,0,28), BackgroundTransparency = 1, Text = mNoms[C.Mode], TextColor3 = mColors[C.Mode], Font = Enum.Font.GothamBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left, Parent = modeCard})
+local modeDescLbl = mk("TextLabel", {Size = UDim2.new(1,-28,0,14), Position = UDim2.new(0,14,0,52), BackgroundTransparency = 1, Text = mDesc[C.Mode], TextColor3 = TEXT3, Font = Enum.Font.Gotham, TextSize = 10, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Parent = modeCard})
 
-local logCard = card(p1, 272, 44)
-sectionTitle(logCard, 6, "Dernier evenement")
-local logLbl = mk("TextLabel", {Size = UDim2.new(1,-24,0,12), Position = UDim2.new(0,12,0,24), BackgroundTransparency = 1, Text = "...", TextColor3 = ORANGE, Font = Enum.Font.Code, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, Parent = logCard})
+-- Log
+local logCard = card(p1, 320, 50)
+section(logCard, 8, "Dernier evenement")
+local logLbl = mk("TextLabel", {Size = UDim2.new(1,-28,0,14), Position = UDim2.new(0,14,0,28), BackgroundTransparency = 1, Text = derLog, TextColor3 = ORANGE, Font = Enum.Font.Code, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = logCard})
 
-makeButton(p1, 326, "Forcer recherche balle", BG4, function() balle = chercheBalle(); log(balle and "Balle: "..balle.Name or "Aucune balle") end)
-makeButton(p1, 362, "Reset statistiques", BG4, function() compteur=0; streak=0; best=0; log("Reset") end)
+-- Boutons
+makeButton(p1, 380, "Forcer recherche balle", BG4, function() balle = chercheBalle(); log(balle and "Balle: "..balle.Name or "Aucune balle") end)
+makeButton(p1, 420, "Reset statistiques", BG4, function() compteur=0; streak=0; best=0; log("Stats reset") end)
 
-local kCard = card(p1, 400, 50)
-sectionTitle(kCard, 6, "Raccourcis")
-mk("TextLabel", {Size = UDim2.new(1,-24,0,28), Position = UDim2.new(0,12,0,20), BackgroundTransparency = 1, Text = "RShift  ON / OFF\nRCtrl   Afficher / Masquer", TextColor3 = TEXT3, Font = Enum.Font.Code, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, Parent = kCard})
-p1.CanvasSize = UDim2.new(0,0,0,458)
+-- Raccourcis
+local kCard = card(p1, 464, 58)
+section(kCard, 8, "Raccourcis clavier")
+mk("TextLabel", {Size = UDim2.new(1,-28,0,30), Position = UDim2.new(0,14,0,24), BackgroundTransparency = 1, Text = "RShift    Activer / Desactiver le parry\nRCtrl     Afficher / Masquer le panel", TextColor3 = TEXT3, Font = Enum.Font.Code, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = kCard})
+p1.CanvasSize = UDim2.new(0,0,0,532)
 
--- ═══════ PAGE 2 : CONFIG ═══════
+-- ═══════════════════════════════════════════════
+--  PAGE 2 : REGLAGES
+-- ═══════════════════════════════════════════════
 local p2 = pagesList[2]
 
-local mainCard = card(p2, 6, 42)
-local majToggle = makeToggle(mainCard, 12, "Auto Parry", nil, C.Active, function(v)
+-- Toggle ON/OFF
+local mainCard = card(p2, 8, 48)
+local majToggle = makeToggle(mainCard, 14, "Auto Parry", nil, C.Active, function(v)
     C.Active = v; statusLbl.Text = v and "ACTIF" or "INACTIF"; statusLbl.TextColor3 = v and GREEN or RED; statusDot.BackgroundColor3 = v and GREEN or RED
 end)
 
-local modeSelCard = card(p2, 56, 50)
-sectionTitle(modeSelCard, 8, "Mode de parry")
+-- Mode
+local modeSelCard = card(p2, 64, 58)
+section(modeSelCard, 10, "Mode de parry")
 local modeBtns = {}
 for i = 1, 3 do
-    local mb = mk("TextButton", {Size = UDim2.new(1/3,-6,0,24), Position = UDim2.new((i-1)/3,2,0,22), BackgroundColor3 = i==C.Mode and mColors[i] or BG4, Text = mNoms[i], TextColor3 = i==C.Mode and TEXT1 or TEXT3, Font = Enum.Font.GothamBold, TextSize = 9, Parent = modeSelCard})
-    rnd(mb, 6)
+    local mb = mk("TextButton", {Size = UDim2.new(1/3,-8,0,28), Position = UDim2.new((i-1)/3,3,0,26), BackgroundColor3 = i==C.Mode and mColors[i] or BG5, Text = mNoms[i], TextColor3 = i==C.Mode and TEXT1 or TEXT3, Font = Enum.Font.GothamBold, TextSize = 10, Parent = modeSelCard})
+    rnd(mb, 7)
     modeBtns[i] = mb
     mb.MouseButton1Click:Connect(function()
         C.Mode = i; modeLbl.Text = mNoms[i]; modeLbl.TextColor3 = mColors[i]; modeDescLbl.Text = mDesc[i]
         for j, b2 in ipairs(modeBtns) do
-            TweenService:Create(b2, TweenInfo.new(0.12), {BackgroundColor3 = j==i and mColors[j] or BG4, TextColor3 = j==i and TEXT1 or TEXT3}):Play()
+            TweenService:Create(b2, TweenInfo.new(0.12), {BackgroundColor3 = j==i and mColors[j] or BG5, TextColor3 = j==i and TEXT1 or TEXT3}):Play()
         end
     end)
 end
 
-local sensCard = card(p2, 114, 80)
-sectionTitle(sensCard, 8, "Detection")
-makeSlider(sensCard, 24, "Sensibilite", "Plus bas = detecte plus vite (0.1-0.5)", 0.1, 0.5, C.Sensibilite, "", function(v) C.Sensibilite = v end)
-makeSlider(sensCard, 54, "Distance (Safe)", "Distance fixe pour le mode Safe", 5, 50, C.DistanceParry, "", function(v) C.DistanceParry = v end)
+-- Detection
+local sensCard = card(p2, 130, 100)
+section(sensCard, 10, "Detection")
+makeSlider(sensCard, 28, "Sensibilite", "Plus bas = detecte la balle plus vite (0.05-0.5)", 0.05, 0.5, C.Sensibilite, "", function(v) C.Sensibilite = v end)
+makeSlider(sensCard, 68, "Distance (Safe)", "Distance fixe pour le mode Safe", 5, 60, C.DistanceParry, "", function(v) C.DistanceParry = v; mDesc[3] = "Distance fixe. Parry a "..v.." studs. Prudent." end)
 
-local perfCard = card(p2, 202, 50)
-sectionTitle(perfCard, 8, "Performance")
-makeSlider(perfCard, 24, "Cooldown", "Delai entre parrys (sec)", 0.1, 1.0, COOLDOWN, "s", function(v) COOLDOWN = v end)
+-- Performance
+local perfCard = card(p2, 238, 60)
+section(perfCard, 10, "Timing")
+makeSlider(perfCard, 28, "Cooldown", "Delai entre 2 parrys (secondes)", 0.05, 1.0, COOLDOWN, "s", function(v) COOLDOWN = v end)
 
-local recCard = card(p2, 260, 100)
-sectionTitle(recCard, 8, "Configs recommandees")
-makeButton(recCard, 24, "Ultra Reactif (Agressif, Sens 0.15)", Color3.fromRGB(40, 25, 25), function()
-    C.Mode = 1; C.Sensibilite = 0.15; COOLDOWN = 0.2
-    for j, b2 in ipairs(modeBtns) do b2.BackgroundColor3 = j==1 and mColors[1] or BG4; b2.TextColor3 = j==1 and TEXT1 or TEXT3 end
+-- Configs recommandees
+section(p2, 308, "Configs recommandees")
+
+makeButton(p2, 326, "ULTRA REACTIF | Agressif, Sens 0.1, CD 0.15s", Color3.fromRGB(50, 22, 22), function()
+    C.Mode = 1; C.Sensibilite = 0.1; COOLDOWN = 0.15
+    for j, b2 in ipairs(modeBtns) do b2.BackgroundColor3 = j==1 and mColors[1] or BG5; b2.TextColor3 = j==1 and TEXT1 or TEXT3 end
     modeLbl.Text = mNoms[1]; modeLbl.TextColor3 = mColors[1]; modeDescLbl.Text = mDesc[1]; log("Config: Ultra Reactif")
 end)
-makeButton(recCard, 60, "Equilibre (Predictif, Sens 0.25)", Color3.fromRGB(25, 25, 40), function()
-    C.Mode = 2; C.Sensibilite = 0.25; COOLDOWN = 0.25
-    for j, b2 in ipairs(modeBtns) do b2.BackgroundColor3 = j==2 and mColors[2] or BG4; b2.TextColor3 = j==2 and TEXT1 or TEXT3 end
+makeButton(p2, 366, "EQUILIBRE | Predictif, Sens 0.2, CD 0.2s", Color3.fromRGB(22, 22, 50), function()
+    C.Mode = 2; C.Sensibilite = 0.2; COOLDOWN = 0.2
+    for j, b2 in ipairs(modeBtns) do b2.BackgroundColor3 = j==2 and mColors[2] or BG5; b2.TextColor3 = j==2 and TEXT1 or TEXT3 end
     modeLbl.Text = mNoms[2]; modeLbl.TextColor3 = mColors[2]; modeDescLbl.Text = mDesc[2]; log("Config: Equilibre")
 end)
-p2.CanvasSize = UDim2.new(0,0,0,368)
+makeButton(p2, 406, "PRUDENT | Safe, Dist 15, CD 0.3s", Color3.fromRGB(22, 40, 22), function()
+    C.Mode = 3; C.Sensibilite = 0.25; C.DistanceParry = 15; COOLDOWN = 0.3
+    for j, b2 in ipairs(modeBtns) do b2.BackgroundColor3 = j==3 and mColors[3] or BG5; b2.TextColor3 = j==3 and TEXT1 or TEXT3 end
+    modeLbl.Text = mNoms[3]; modeLbl.TextColor3 = mColors[3]; modeDescLbl.Text = mDesc[3]; log("Config: Prudent")
+end)
+p2.CanvasSize = UDim2.new(0,0,0,450)
 
--- ═══════ PAGE 3 : EXTRA ═══════
+-- ═══════════════════════════════════════════════
+--  PAGE 3 : EXTRA
+-- ═══════════════════════════════════════════════
 local p3 = pagesList[3]
 
-local extraCard = card(p3, 6, 80)
-sectionTitle(extraCard, 8, "Options")
-makeToggle(extraCard, 26, "Anti-AFK", "Empeche le kick inactivite", C.AntiAFK, function(v) C.AntiAFK = v end)
-makeToggle(extraCard, 56, "Flash Parry", "Flash bleu a chaque parry", C.FlashParry, function(v) C.FlashParry = v end)
+local extraCard = card(p3, 8, 96)
+section(extraCard, 10, "Options")
+makeToggle(extraCard, 30, "Anti-AFK", "Empeche le kick pour inactivite", C.AntiAFK, function(v) C.AntiAFK = v end)
+makeToggle(extraCard, 66, "Flash Parry", "Flash bleu a chaque parry reussi", C.FlashParry, function(v) C.FlashParry = v end)
 
-local infoCard = card(p3, 94, 130)
-sectionTitle(infoCard, 8, "Securite")
+local infoCard = card(p3, 114, 160)
+section(infoCard, 10, "Pourquoi c'est indetectable")
 mk("TextLabel", {
-    Size = UDim2.new(1,-24,0,100), Position = UDim2.new(0,12,0,24), BackgroundTransparency = 1,
-    Text = "1 seul mouse1click() par parry\nAucun RemoteEvent fire\nAucun Highlight / Sound / ESP\nAucun VirtualUser / VIM\nNom RenderStep aleatoire\nNom ScreenGui aleatoire\nAnti-AFK par CFrame",
-    TextColor3 = TEXT3, Font = Enum.Font.Gotham, TextSize = 9, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Parent = infoCard,
+    Size = UDim2.new(1,-28,0,130), Position = UDim2.new(0,14,0,28), BackgroundTransparency = 1,
+    Text = "mouse1click() uniquement (1 clic par parry)\nAucun RemoteEvent:FireServer()\nAucun Highlight, Sound ou BillboardGui\nAucun VirtualUser ou VirtualInputManager\nNom RenderStep = aleatoire (pas detectable)\nNom ScreenGui = aleatoire\nPas de multi-click suspect\nAnti-AFK par CFrame (invisible serveur)\nAucune instance suspecte creee\nZero interaction avec les remotes du jeu",
+    TextColor3 = TEXT3, Font = Enum.Font.Gotham, TextSize = 10, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Parent = infoCard,
 })
-p3.CanvasSize = UDim2.new(0,0,0,232)
 
--- ═══════ DRAG ═══════
+local credCard = card(p3, 284, 40)
+mk("TextLabel", {Size = UDim2.new(1,-28,0,20), Position = UDim2.new(0,14,0,10), BackgroundTransparency = 1, Text = "Auto Parry v11 | github.com/lapsy4trie1337-code", TextColor3 = Color3.fromRGB(55,55,75), Font = Enum.Font.Gotham, TextSize = 9, Parent = credCard})
+p3.CanvasSize = UDim2.new(0,0,0,334)
+
+-- ═══════════════════════════════════════════════
+--  DRAG
+-- ═══════════════════════════════════════════════
 local dd, sp
 hdr.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then dd = i.Position; sp = panel.Position end end)
 hdr.InputChanged:Connect(function(i) if dd and i.UserInputType == Enum.UserInputType.MouseMovement then local d2 = i.Position - dd; panel.Position = UDim2.new(sp.X.Scale, sp.X.Offset+d2.X, sp.Y.Scale, sp.Y.Offset+d2.Y) end end)
 UIS.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then dd = nil end end)
 
--- ═══════ RACCOURCIS ═══════
+-- ═══════════════════════════════════════════════
+--  RACCOURCIS
+-- ═══════════════════════════════════════════════
 UIS.InputBegan:Connect(function(input, g)
     if g then return end
     if input.KeyCode == C.KToggle then
@@ -541,7 +633,7 @@ end)
 gui.Parent = LP:WaitForChild("PlayerGui")
 
 -- ═══════════════════════════════════════════════
---  BOUCLE — nom aleatoire
+--  BOUCLE PRINCIPALE
 -- ═══════════════════════════════════════════════
 RunService:BindToRenderStep(RENDER_KEY, Enum.RenderPriority.First.Value, function()
     local ok = balle and balle.Parent and true or false
@@ -553,14 +645,21 @@ RunService:BindToRenderStep(RENDER_KEY, Enum.RenderPriority.First.Value, functio
     end
     if not cible then streak = 0 end
 
+    -- Update UI seulement sur l'onglet statut
     if onglet == 1 then
         lblParrys.Text = tostring(compteur)
         lblStreak.Text = tostring(streak)
         lblBest.Text = tostring(best)
-        if ok then lblBS.Text = "Balle: "..balle.Name; lblBS.TextColor3 = GREEN
-        else lblBS.Text = "Recherche..."; lblBS.TextColor3 = ORANGE end
-        lblBI.Text = "Vit: "..math.floor(vBalle).." | Dist: "..math.floor(dBalle).." | Cible: "..(cible and "OUI" or "non")
+        if ok then lblBS.Text = "Balle: " .. balle.Name; lblBS.TextColor3 = GREEN
+        else lblBS.Text = "Recherche en cours..."; lblBS.TextColor3 = ORANGE end
+        lblBI.Text = "Vitesse: " .. math.floor(vBalle) .. " | Distance: " .. math.floor(dBalle) .. " | Cible: " .. (cible and "OUI" or "non")
         lblBI.TextColor3 = cible and YELLOW or TEXT3
+        if cible and vBalle > 0 and dBalle > 0 then
+            local ti = dBalle / math.max(vBalle, 1)
+            lblTI.Text = "Temps impact: " .. string.format("%.2f", ti) .. "s | Seuil parry: " .. (C.Mode == 1 and math.floor(math.clamp(10+vBalle*0.09,10,55)) .. " studs" or C.Mode == 2 and string.format("%.2f", math.clamp(0.18+vBalle/250,0.18,2)) .. "s" or C.DistanceParry .. " studs")
+        else
+            lblTI.Text = ""
+        end
         logLbl.Text = derLog
     end
 
@@ -568,4 +667,4 @@ RunService:BindToRenderStep(RENDER_KEY, Enum.RenderPriority.First.Value, functio
     if doitParry(dBalle, vBalle) then parry() end
 end)
 
-print("[AutoParry] v10.1 charge avec succes!")
+print("[AutoParry] v11 charge - Mode: " .. mNoms[C.Mode] .. " | Sensibilite: " .. C.Sensibilite .. " | Cooldown: " .. COOLDOWN)

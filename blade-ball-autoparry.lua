@@ -1,4 +1,4 @@
--- Blade Ball Auto Parry v3
+-- Blade Ball Auto Parry v4
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -8,14 +8,14 @@ local UIS = game:GetService("UserInputService")
 local LP = Players.LocalPlayer
 
 -- ═══════════════════════════════════════════════
---  CONFIGURATION
+--  CONFIG
 -- ═══════════════════════════════════════════════
 local Config = {
     Active = true,
     DistanceParry = 15,
     DistanceMin = 0,
     Delai = 0,
-    ModeDebug = false,
+    ModeDebug = true,
     ToucheToggle = Enum.KeyCode.RightShift,
     TouchePanel = Enum.KeyCode.RightControl,
 }
@@ -24,67 +24,98 @@ local Config = {
 --  VARIABLES
 -- ═══════════════════════════════════════════════
 local balleCachee = nil
-local remotesParry = {}
+local remoteTrouve = nil
 local dernierParry = 0
 local compteurParry = 0
-local debugInfo = ""
+local logMessages = {}
+
+local function log(msg)
+    table.insert(logMessages, os.clock() .. " | " .. msg)
+    if #logMessages > 30 then table.remove(logMessages, 1) end
+    warn("[AutoParry] " .. msg)
+end
 
 -- ═══════════════════════════════════════════════
---  TROUVER TOUS LES REMOTES POSSIBLES
+--  SCANNER : DUMP TOUT LE JEU DANS LA CONSOLE
 -- ═══════════════════════════════════════════════
-local function chercherRemotes()
-    remotesParry = {}
+local function scannerJeu()
+    log("=== SCAN DU JEU ===")
 
-    local function scanner(parent)
-        for _, v in pairs(parent:GetDescendants()) do
-            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
-                local n = v.Name:lower()
-                if n:find("parry") or n:find("block") or n:find("deflect")
-                    or n:find("ability") or n:find("hit") or n:find("slash")
-                    or n:find("swing") or n:find("click") or n:find("action")
-                    or n:find("combat") or n:find("attack") then
-                    table.insert(remotesParry, v)
+    -- Lister tous les remotes dans ReplicatedStorage
+    log("--- REMOTES dans ReplicatedStorage ---")
+    local nbRemotes = 0
+    for _, v in pairs(RS:GetDescendants()) do
+        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+            log("  Remote: " .. v:GetFullName() .. " [" .. v.ClassName .. "]")
+            nbRemotes += 1
+        end
+    end
+    log("Total remotes RS: " .. nbRemotes)
+
+    -- Lister les enfants directs du workspace
+    log("--- ENFANTS du Workspace ---")
+    for _, v in pairs(workspace:GetChildren()) do
+        log("  " .. v.ClassName .. ": " .. v.Name)
+    end
+
+    -- Chercher tout ce qui ressemble a une balle
+    log("--- RECHERCHE BALLE ---")
+    for _, v in pairs(workspace:GetDescendants()) do
+        if v:IsA("BasePart") then
+            local n = v.Name:lower()
+            if n:find("ball") or n:find("balle") or n:find("projectile")
+                or n:find("orb") or n:find("sphere") then
+                log("  Balle possible: " .. v:GetFullName())
+                -- Lister ses attributs
+                for _, attr in pairs(v:GetAttributes()) do end
+                local attrs = v:GetAttributes()
+                for k, val in pairs(attrs) do
+                    log("    Attribut: " .. k .. " = " .. tostring(val))
+                end
+                -- Lister ses enfants
+                for _, child in pairs(v:GetChildren()) do
+                    log("    Enfant: " .. child.ClassName .. " " .. child.Name)
+                    if child:IsA("ObjectValue") then
+                        log("      Valeur: " .. tostring(child.Value))
+                    end
                 end
             end
         end
     end
 
-    scanner(RS)
-
-    pcall(function()
-        local modules = LP:FindFirstChild("PlayerScripts")
-        if modules then scanner(modules) end
-    end)
-
-    pcall(function()
-        local sg = LP:FindFirstChild("PlayerGui")
-        if sg then scanner(sg) end
-    end)
-
-    if Config.ModeDebug then
-        debugInfo = "Remotes: " .. #remotesParry
-        for i, r in pairs(remotesParry) do
-            if i <= 5 then
-                debugInfo = debugInfo .. "\n  " .. r:GetFullName()
+    -- Chercher des modules/dossiers importants
+    log("--- DOSSIERS IMPORTANTS ---")
+    local noms = {"Balls", "Ball", "Remotes", "Events", "Game", "Combat", "Abilities", "Shared"}
+    for _, nom in pairs(noms) do
+        local obj = workspace:FindFirstChild(nom) or RS:FindFirstChild(nom)
+        if obj then
+            log("  Trouve: " .. obj:GetFullName())
+            for _, child in pairs(obj:GetChildren()) do
+                log("    " .. child.ClassName .. ": " .. child.Name)
             end
         end
     end
+
+    log("=== FIN SCAN ===")
 end
 
 -- ═══════════════════════════════════════════════
---  DETECTION DE LA BALLE
+--  TROUVER LA BALLE
 -- ═══════════════════════════════════════════════
 local function estUneBalle(obj)
-    if not obj:IsA("BasePart") then return false end
+    if not (obj:IsA("BasePart") or obj:IsA("MeshPart")) then return false end
     local n = obj.Name:lower()
-    if n == "ball" or n == "balle" then return true end
-    if obj:GetAttribute("Target") or obj:GetAttribute("target")
-        or obj:GetAttribute("CurrentTarget") then
+    if n == "ball" or n == "balle" or n == "projectile" or n == "orb" then
         return true
     end
-    local parent = obj.Parent
-    if parent then
-        local pn = parent.Name:lower()
+    if obj.Shape and obj.Shape == Enum.PartType.Ball then
+        local attrs = obj:GetAttributes()
+        if attrs["Target"] or attrs["target"] or attrs["realTarget"] or attrs["CurrentTarget"] then
+            return true
+        end
+    end
+    if obj.Parent then
+        local pn = obj.Parent.Name:lower()
         if pn == "balls" or pn == "ball" or pn == "balles" then
             return true
         end
@@ -95,15 +126,21 @@ end
 local function surAjout(obj)
     if estUneBalle(obj) then
         balleCachee = obj
-        if Config.ModeDebug then
-            debugInfo = "Balle trouvee: " .. obj:GetFullName()
-        end
+        log("Balle detectee: " .. obj:GetFullName())
+
+        -- Surveiller les changements d'attributs
+        obj.AttributeChanged:Connect(function(attr)
+            if Config.ModeDebug then
+                log("Attribut change: " .. attr .. " = " .. tostring(obj:GetAttribute(attr)))
+            end
+        end)
     end
 end
 
 local function surRetrait(obj)
     if obj == balleCachee then
         balleCachee = nil
+        log("Balle disparue")
     end
 end
 
@@ -114,37 +151,48 @@ workspace.DescendantRemoving:Connect(surRetrait)
 for _, v in pairs(workspace:GetDescendants()) do
     if estUneBalle(v) then
         balleCachee = v
+        log("Balle trouvee au demarrage: " .. v:GetFullName())
         break
     end
 end
 
--- Aussi surveiller les enfants directs du workspace
-for _, dossier in pairs(workspace:GetChildren()) do
-    if dossier:IsA("Folder") or dossier:IsA("Model") then
-        dossier.ChildAdded:Connect(function(child)
-            if child:IsA("BasePart") or child:IsA("Model") then
-                task.wait(0.1)
-                for _, d in pairs(child:GetDescendants()) do
-                    surAjout(d)
-                end
-                surAjout(child)
+-- ═══════════════════════════════════════════════
+--  TROUVER LE REMOTE
+-- ═══════════════════════════════════════════════
+local function chercherRemote()
+    -- Chercher dans tout RS
+    for _, v in pairs(RS:GetDescendants()) do
+        if v:IsA("RemoteEvent") then
+            local n = v.Name:lower()
+            if n:find("parry") or n:find("block") or n:find("deflect") then
+                remoteTrouve = v
+                log("Remote principal: " .. v:GetFullName())
+                return
             end
-        end)
+        end
     end
+
+    -- Si rien, chercher plus large
+    for _, v in pairs(RS:GetDescendants()) do
+        if v:IsA("RemoteEvent") then
+            local n = v.Name:lower()
+            if n:find("hit") or n:find("slash") or n:find("swing")
+                or n:find("click") or n:find("action") or n:find("ability")
+                or n:find("combat") or n:find("attack") or n:find("use") then
+                remoteTrouve = v
+                log("Remote secondaire: " .. v:GetFullName())
+                return
+            end
+        end
+    end
+
+    log("AUCUN remote trouve - utilise mouse1click en fallback")
 end
 
-chercherRemotes()
-
--- Re-scanner les remotes si rien trouve
-task.spawn(function()
-    task.wait(3)
-    if #remotesParry == 0 then
-        chercherRemotes()
-    end
-end)
+chercherRemote()
 
 -- ═══════════════════════════════════════════════
---  VERIFICATION CIBLE
+--  DETECTION CIBLE
 -- ═══════════════════════════════════════════════
 local function getHRP()
     local c = LP.Character
@@ -157,56 +205,60 @@ local function balleVersJoueur(balle)
 
     local dist = (balle.Position - hrp.Position).Magnitude
 
-    -- Methode 1 : attribut sur la balle
-    local cible = balle:GetAttribute("Target")
-        or balle:GetAttribute("target")
-        or balle:GetAttribute("CurrentTarget")
-        or balle:GetAttribute("TargetPlayer")
+    -- Tester tous les noms d'attributs possibles
+    local nomsAttributs = {
+        "Target", "target", "CurrentTarget", "realTarget",
+        "RealTarget", "TargetPlayer", "targetPlayer",
+        "currentTarget", "PlayerTarget"
+    }
 
-    if cible then
-        local estMoi = false
-        if typeof(cible) == "Instance" then
-            estMoi = (cible == LP.Character) or (cible == LP)
-        elseif typeof(cible) == "string" then
-            estMoi = (cible == LP.Name)
-        elseif typeof(cible) == "number" then
-            estMoi = (cible == LP.UserId)
+    for _, nom in pairs(nomsAttributs) do
+        local cible = balle:GetAttribute(nom)
+        if cible ~= nil then
+            local estMoi = false
+            if typeof(cible) == "Instance" then
+                estMoi = (cible == LP.Character) or (cible == LP)
+            elseif typeof(cible) == "string" then
+                estMoi = (cible == LP.Name) or (cible == tostring(LP.UserId))
+            elseif typeof(cible) == "number" then
+                estMoi = (cible == LP.UserId)
+            end
+            if Config.ModeDebug and estMoi then
+                log("Cible par attribut '" .. nom .. "': " .. tostring(cible))
+            end
+            return estMoi, dist
         end
-        return estMoi, dist
     end
 
-    -- Methode 2 : ObjectValue enfant
+    -- Verifier le parent aussi
+    if balle.Parent and balle.Parent ~= workspace then
+        for _, nom in pairs(nomsAttributs) do
+            local cible = balle.Parent:GetAttribute(nom)
+            if cible ~= nil then
+                local estMoi = false
+                if typeof(cible) == "Instance" then
+                    estMoi = (cible == LP.Character) or (cible == LP)
+                elseif typeof(cible) == "string" then
+                    estMoi = (cible == LP.Name)
+                elseif typeof(cible) == "number" then
+                    estMoi = (cible == LP.UserId)
+                end
+                return estMoi, dist
+            end
+        end
+    end
+
+    -- ObjectValue enfant
     for _, child in pairs(balle:GetChildren()) do
         if child:IsA("ObjectValue") and child.Value then
-            local n = child.Name:lower()
-            if n:find("target") or n:find("cible") or n:find("player") then
-                if child.Value == LP.Character or child.Value == LP then
-                    return true, dist
-                end
-                local model = child.Value
-                if model:IsA("Model") and model == LP.Character then
-                    return true, dist
-                end
-                return false, dist
+            if child.Value == LP.Character or child.Value == LP then
+                return true, dist
             end
+            return false, dist
         end
     end
 
-    -- Methode 3 : attribut sur le parent/modele
-    local parent = balle.Parent
-    if parent and parent ~= workspace then
-        local cibleP = parent:GetAttribute("Target") or parent:GetAttribute("target")
-        if cibleP then
-            if typeof(cibleP) == "string" and cibleP == LP.Name then
-                return true, dist
-            end
-            if typeof(cibleP) == "Instance" and (cibleP == LP or cibleP == LP.Character) then
-                return true, dist
-            end
-        end
-    end
-
-    -- Methode 4 : direction de la velocite
+    -- Dernier recours : velocite
     local ok, vel = pcall(function() return balle.AssemblyLinearVelocity end)
     if not ok then
         ok, vel = pcall(function() return balle.Velocity end)
@@ -214,7 +266,7 @@ local function balleVersJoueur(balle)
     if ok and vel and vel.Magnitude > 10 then
         local vers = (hrp.Position - balle.Position).Unit
         local dot = vel.Unit:Dot(vers)
-        if dot > 0.65 then
+        if dot > 0.6 then
             return true, dist
         end
     end
@@ -223,34 +275,47 @@ local function balleVersJoueur(balle)
 end
 
 -- ═══════════════════════════════════════════════
---  PARRY
+--  PARRY (multi-methode)
 -- ═══════════════════════════════════════════════
 local function faireParry()
     local maintenant = tick()
-    if maintenant - dernierParry < 0.3 then return end
+    if maintenant - dernierParry < 0.25 then return end
     dernierParry = maintenant
     compteurParry += 1
 
-    if #remotesParry == 0 then
-        chercherRemotes()
+    -- Methode 1 : Remote
+    if remoteTrouve then
+        pcall(function()
+            remoteTrouve:FireServer()
+        end)
+        if Config.ModeDebug then log("Parry via remote") end
+        return
     end
 
-    for _, remote in pairs(remotesParry) do
-        pcall(function()
-            if remote:IsA("RemoteEvent") then
-                remote:FireServer()
-            elseif remote:IsA("RemoteFunction") then
-                remote:InvokeServer()
+    -- Methode 2 : mouse1click (fonctionne sur la plupart des executors)
+    pcall(function()
+        mouse1click()
+    end)
+
+    -- Methode 3 : fireclick si ClickDetector present
+    pcall(function()
+        local char = LP.Character
+        if char then
+            local tool = char:FindFirstChildWhichIsA("Tool")
+            if tool then
+                tool:Activate()
             end
-        end)
-    end
+        end
+    end)
+
+    if Config.ModeDebug then log("Parry via mouse1click/tool") end
 end
 
 -- ═══════════════════════════════════════════════
---  INTERFACE - COMPOSANTS
+--  GUI
 -- ═══════════════════════════════════════════════
 local gui = Instance.new("ScreenGui")
-gui.Name = "AP_" .. tostring(math.random(10000, 99999))
+gui.Name = "AP_" .. math.random(10000, 99999)
 gui.ResetOnSpawn = false
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
@@ -263,16 +328,12 @@ local function creer(classe, props)
     return obj
 end
 
-local function coins(parent, r)
-    creer("UICorner", { CornerRadius = UDim.new(0, r or 8), Parent = parent })
-end
+local function coins(p, r) creer("UICorner", { CornerRadius = UDim.new(0, r or 8), Parent = p }) end
 
--- ═══════════════════════════════════════════════
---  INTERFACE - PANEL
--- ═══════════════════════════════════════════════
+-- Panel
 local panel = creer("Frame", {
-    Size = UDim2.new(0, 280, 0, 420),
-    Position = UDim2.new(0, 16, 0.5, -210),
+    Size = UDim2.new(0, 290, 0, 480),
+    Position = UDim2.new(0, 16, 0.5, -240),
     BackgroundColor3 = Color3.fromRGB(15, 15, 20),
     BackgroundTransparency = 0.03,
     Parent = gui,
@@ -280,9 +341,20 @@ local panel = creer("Frame", {
 coins(panel, 12)
 creer("UIStroke", { Color = Color3.fromRGB(55, 55, 70), Thickness = 1.5, Parent = panel })
 
+-- ScrollFrame pour le contenu
+local contenu = creer("ScrollingFrame", {
+    Size = UDim2.new(1, 0, 1, -42),
+    Position = UDim2.new(0, 0, 0, 42),
+    BackgroundTransparency = 1,
+    ScrollBarThickness = 3,
+    ScrollBarImageColor3 = Color3.fromRGB(90, 130, 255),
+    CanvasSize = UDim2.new(0, 0, 0, 520),
+    Parent = panel,
+})
+
 -- Barre titre
 local barre = creer("Frame", {
-    Size = UDim2.new(1, 0, 0, 40),
+    Size = UDim2.new(1, 0, 0, 42),
     BackgroundColor3 = Color3.fromRGB(22, 22, 30),
     Parent = panel,
 })
@@ -292,7 +364,7 @@ creer("TextLabel", {
     Size = UDim2.new(1, -16, 1, 0),
     Position = UDim2.new(0, 14, 0, 0),
     BackgroundTransparency = 1,
-    Text = "AUTO PARRY v3",
+    Text = "AUTO PARRY v4",
     TextColor3 = Color3.fromRGB(90, 130, 255),
     Font = Enum.Font.GothamBold,
     TextSize = 15,
@@ -303,56 +375,56 @@ creer("TextLabel", {
 -- Statut
 local lblStatut = creer("TextLabel", {
     Size = UDim2.new(1, -24, 0, 18),
-    Position = UDim2.new(0, 14, 0, 48),
+    Position = UDim2.new(0, 14, 0, 6),
     BackgroundTransparency = 1,
     Text = "ACTIF",
     TextColor3 = Color3.fromRGB(0, 210, 80),
     Font = Enum.Font.GothamBold,
     TextSize = 14,
     TextXAlignment = Enum.TextXAlignment.Left,
-    Parent = panel,
+    Parent = contenu,
 })
 
 -- Stats
 local lblStats = creer("TextLabel", {
-    Size = UDim2.new(1, -24, 0, 16),
-    Position = UDim2.new(0, 14, 0, 68),
+    Size = UDim2.new(1, -24, 0, 32),
+    Position = UDim2.new(0, 14, 0, 26),
     BackgroundTransparency = 1,
-    Text = "Parrys: 0  |  Remotes: 0  |  Balle: --",
+    Text = "Parrys: 0\nBalle: NON  |  Remote: NON",
     TextColor3 = Color3.fromRGB(120, 120, 140),
     Font = Enum.Font.Gotham,
     TextSize = 11,
     TextXAlignment = Enum.TextXAlignment.Left,
-    Parent = panel,
+    TextWrapped = true,
+    Parent = contenu,
 })
 
--- Debug
-local lblDebug = creer("TextLabel", {
-    Size = UDim2.new(1, -24, 0, 40),
-    Position = UDim2.new(0, 14, 1, -50),
+-- Log debug
+local lblLog = creer("TextLabel", {
+    Size = UDim2.new(1, -24, 0, 100),
+    Position = UDim2.new(0, 14, 0, 410),
     BackgroundTransparency = 1,
     Text = "",
     TextColor3 = Color3.fromRGB(255, 200, 50),
     Font = Enum.Font.Code,
-    TextSize = 10,
+    TextSize = 9,
     TextXAlignment = Enum.TextXAlignment.Left,
-    TextYAlignment = Enum.TextYAlignment.Bottom,
+    TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true,
-    Visible = false,
-    Parent = panel,
+    Parent = contenu,
 })
 
 -- Separateur
 creer("Frame", {
     Size = UDim2.new(1, -28, 0, 1),
-    Position = UDim2.new(0, 14, 0, 92),
+    Position = UDim2.new(0, 14, 0, 64),
     BackgroundColor3 = Color3.fromRGB(40, 40, 55),
     BorderSizePixel = 0,
-    Parent = panel,
+    Parent = contenu,
 })
 
 -- ═══════════════════════════════════════════════
---  INTERFACE - SLIDER (min 0, max libre)
+--  SLIDER
 -- ═══════════════════════════════════════════════
 local function creerSlider(parent, texte, min, max, defaut, yPos, callback)
     creer("TextLabel", {
@@ -380,71 +452,61 @@ local function creerSlider(parent, texte, min, max, defaut, yPos, callback)
     })
 
     local piste = creer("Frame", {
-        Size = UDim2.new(1, -28, 0, 6),
+        Size = UDim2.new(1, -28, 0, 8),
         Position = UDim2.new(0, 14, 0, yPos + 22),
         BackgroundColor3 = Color3.fromRGB(35, 35, 48),
         Parent = parent,
     })
-    coins(piste, 3)
+    coins(piste, 4)
 
     local remplissage = creer("Frame", {
         Size = UDim2.new((defaut - min) / (max - min), 0, 1, 0),
         BackgroundColor3 = Color3.fromRGB(90, 130, 255),
         Parent = piste,
     })
-    coins(remplissage, 3)
+    coins(remplissage, 4)
 
     local curseur = creer("TextButton", {
-        Size = UDim2.new(0, 16, 0, 16),
-        Position = UDim2.new((defaut - min) / (max - min), -8, 0.5, -8),
+        Size = UDim2.new(0, 18, 0, 18),
+        Position = UDim2.new((defaut - min) / (max - min), -9, 0.5, -9),
         BackgroundColor3 = Color3.fromRGB(230, 230, 240),
         Text = "",
         Parent = piste,
     })
-    coins(curseur, 8)
+    coins(curseur, 9)
 
     local enDrag = false
 
-    curseur.MouseButton1Down:Connect(function()
-        enDrag = true
-    end)
+    local function majSlider(posX)
+        local absPos = piste.AbsolutePosition.X
+        local absSize = piste.AbsoluteSize.X
+        local rel = math.clamp((posX - absPos) / absSize, 0, 1)
+        local val = math.floor(min + rel * (max - min) + 0.5)
+        remplissage.Size = UDim2.new(rel, 0, 1, 0)
+        curseur.Position = UDim2.new(rel, -9, 0.5, -9)
+        lblVal.Text = tostring(val)
+        callback(val)
+    end
 
+    curseur.MouseButton1Down:Connect(function() enDrag = true end)
     piste.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             enDrag = true
-            local absPos = piste.AbsolutePosition.X
-            local absSize = piste.AbsoluteSize.X
-            local rel = math.clamp((input.Position.X - absPos) / absSize, 0, 1)
-            local val = math.floor(min + rel * (max - min) + 0.5)
-            remplissage.Size = UDim2.new(rel, 0, 1, 0)
-            curseur.Position = UDim2.new(rel, -8, 0.5, -8)
-            lblVal.Text = tostring(val)
-            callback(val)
+            majSlider(input.Position.X)
         end
     end)
-
     UIS.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            enDrag = false
-        end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then enDrag = false end
     end)
-
     UIS.InputChanged:Connect(function(input)
         if enDrag and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local absPos = piste.AbsolutePosition.X
-            local absSize = piste.AbsoluteSize.X
-            local rel = math.clamp((input.Position.X - absPos) / absSize, 0, 1)
-            local val = math.floor(min + rel * (max - min) + 0.5)
-            remplissage.Size = UDim2.new(rel, 0, 1, 0)
-            curseur.Position = UDim2.new(rel, -8, 0.5, -8)
-            lblVal.Text = tostring(val)
-            callback(val)
+            majSlider(input.Position.X)
         end
     end)
 end
 
 -- ═══════════════════════════════════════════════
---  INTERFACE - TOGGLE
+--  TOGGLE
 -- ═══════════════════════════════════════════════
 local function creerToggle(parent, texte, defaut, yPos, callback)
     creer("TextLabel", {
@@ -476,14 +538,12 @@ local function creerToggle(parent, texte, defaut, yPos, callback)
     coins(point, 8)
 
     local etat = defaut
-    local btn = creer("TextButton", {
+    creer("TextButton", {
         Size = UDim2.new(1, 0, 1, 0),
         BackgroundTransparency = 1,
         Text = "",
         Parent = fond,
-    })
-
-    btn.MouseButton1Click:Connect(function()
+    }).MouseButton1Click:Connect(function()
         etat = not etat
         TweenService:Create(fond, TweenInfo.new(0.15), {
             BackgroundColor3 = etat and Color3.fromRGB(90, 130, 255) or Color3.fromRGB(45, 45, 58),
@@ -502,11 +562,11 @@ local function creerToggle(parent, texte, defaut, yPos, callback)
 end
 
 -- ═══════════════════════════════════════════════
---  INTERFACE - BOUTONS
+--  BOUTON
 -- ═══════════════════════════════════════════════
 local function creerBouton(parent, texte, couleur, yPos, callback)
     local btn = creer("TextButton", {
-        Size = UDim2.new(1, -28, 0, 28),
+        Size = UDim2.new(1, -28, 0, 30),
         Position = UDim2.new(0, 14, 0, yPos),
         BackgroundColor3 = couleur,
         Text = texte,
@@ -520,62 +580,76 @@ local function creerBouton(parent, texte, couleur, yPos, callback)
     return btn
 end
 
--- Creer les controles
-creerSlider(panel, "Distance Parry", 0, 100, Config.DistanceParry, 102, function(v)
+-- ═══════════════════════════════════════════════
+--  CREER LES CONTROLES
+-- ═══════════════════════════════════════════════
+creerSlider(contenu, "Distance Parry", 0, 100, Config.DistanceParry, 74, function(v)
     Config.DistanceParry = v
 end)
 
-creerSlider(panel, "Distance Minimum", 0, 50, Config.DistanceMin, 142, function(v)
+creerSlider(contenu, "Distance Minimum", 0, 50, Config.DistanceMin, 114, function(v)
     Config.DistanceMin = v
 end)
 
-creerSlider(panel, "Delai (ms)", 0, 500, Config.Delai, 182, function(v)
+creerSlider(contenu, "Delai (ms)", 0, 500, Config.Delai, 154, function(v)
     Config.Delai = v
 end)
 
-local majToggle = creerToggle(panel, "Auto Parry", Config.Active, 225, function(v)
+local majToggle = creerToggle(contenu, "Auto Parry", Config.Active, 198, function(v)
     Config.Active = v
     lblStatut.Text = v and "ACTIF" or "DESACTIVE"
     lblStatut.TextColor3 = v and Color3.fromRGB(0, 210, 80) or Color3.fromRGB(210, 50, 50)
 end)
 
-creerToggle(panel, "Mode Debug", Config.ModeDebug, 255, function(v)
+creerToggle(contenu, "Mode Debug", Config.ModeDebug, 228, function(v)
     Config.ModeDebug = v
-    lblDebug.Visible = v
-    if v then chercherRemotes() end
+    lblLog.Visible = v
 end)
 
--- Separateur
 creer("Frame", {
     Size = UDim2.new(1, -28, 0, 1),
-    Position = UDim2.new(0, 14, 0, 290),
+    Position = UDim2.new(0, 14, 0, 260),
     BackgroundColor3 = Color3.fromRGB(40, 40, 55),
     BorderSizePixel = 0,
-    Parent = panel,
+    Parent = contenu,
 })
 
-creerBouton(panel, "Re-scanner les Remotes", Color3.fromRGB(35, 35, 50), 300, function()
-    chercherRemotes()
-    lblStats.Text = "Parrys: " .. compteurParry .. "  |  Remotes: " .. #remotesParry
-        .. "  |  Balle: " .. (balleCachee and "OUI" or "NON")
+creerBouton(contenu, "Scanner le Jeu (voir console F9)", Color3.fromRGB(50, 40, 20), 270, function()
+    scannerJeu()
 end)
 
--- Raccourcis clavier
+creerBouton(contenu, "Re-chercher Remote", Color3.fromRGB(30, 30, 50), 308, function()
+    remoteTrouve = nil
+    chercherRemote()
+end)
+
+creerBouton(contenu, "Re-chercher Balle", Color3.fromRGB(30, 30, 50), 346, function()
+    balleCachee = nil
+    for _, v in pairs(workspace:GetDescendants()) do
+        if estUneBalle(v) then
+            balleCachee = v
+            log("Balle re-trouvee: " .. v:GetFullName())
+            break
+        end
+    end
+    if not balleCachee then log("Aucune balle trouvee") end
+end)
+
 creer("TextLabel", {
     Size = UDim2.new(1, -28, 0, 45),
-    Position = UDim2.new(0, 14, 0, 340),
+    Position = UDim2.new(0, 14, 0, 385),
     BackgroundTransparency = 1,
-    Text = "RShift  =  Activer/Desactiver\nRCtrl   =  Cacher/Montrer le panel",
+    Text = "RShift = Activer/Desactiver\nRCtrl  = Cacher/Montrer le panel",
     TextColor3 = Color3.fromRGB(90, 90, 110),
     Font = Enum.Font.Gotham,
     TextSize = 11,
     TextXAlignment = Enum.TextXAlignment.Left,
     LineHeight = 1.6,
-    Parent = panel,
+    Parent = contenu,
 })
 
 -- ═══════════════════════════════════════════════
---  DRAG DU PANEL
+--  DRAG
 -- ═══════════════════════════════════════════════
 local debutDrag, posDepart
 
@@ -597,13 +671,11 @@ barre.InputChanged:Connect(function(input)
 end)
 
 UIS.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        debutDrag = nil
-    end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then debutDrag = nil end
 end)
 
 -- ═══════════════════════════════════════════════
---  RACCOURCIS CLAVIER
+--  RACCOURCIS
 -- ═══════════════════════════════════════════════
 UIS.InputBegan:Connect(function(input, traite)
     if traite then return end
@@ -623,12 +695,17 @@ gui.Parent = LP:WaitForChild("PlayerGui")
 --  BOUCLE PRINCIPALE
 -- ═══════════════════════════════════════════════
 RunService.Heartbeat:Connect(function()
-    -- Maj stats
-    lblStats.Text = "Parrys: " .. compteurParry .. "  |  Remotes: " .. #remotesParry
-        .. "  |  Balle: " .. (balleCachee and balleCachee.Parent and "OUI" or "NON")
+    -- Maj affichage
+    lblStats.Text = "Parrys: " .. compteurParry
+        .. "\nBalle: " .. (balleCachee and balleCachee.Parent and "OUI" or "NON")
+        .. "  |  Remote: " .. (remoteTrouve and remoteTrouve.Name or "mouse1click")
 
-    if Config.ModeDebug then
-        lblDebug.Text = debugInfo
+    if Config.ModeDebug and #logMessages > 0 then
+        local txt = ""
+        for i = math.max(1, #logMessages - 6), #logMessages do
+            txt = txt .. logMessages[i] .. "\n"
+        end
+        lblLog.Text = txt
     end
 
     if not Config.Active then return end
@@ -646,4 +723,10 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
-warn("[Auto Parry v3] Charge ! Remotes trouves: " .. #remotesParry)
+-- Scan au demarrage
+task.spawn(function()
+    task.wait(2)
+    scannerJeu()
+end)
+
+log("Script charge ! Ouvre la console (F9) pour voir les details")

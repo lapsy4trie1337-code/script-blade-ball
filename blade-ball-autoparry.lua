@@ -1,4 +1,4 @@
--- Auto Parry v14 — Final | ETA Timing | Zero Lag | Zero Faux Clic
+-- Auto Parry v15 — Ultra Reactif | Zero Lag | Intelligent
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -34,23 +34,8 @@ local prevTime = 0
 local closingSpd = 0
 local approcheSuite = 0
 local eta = 999
-local cachedCible = false
-local cachedConfirme = false
 local frameN = 0
-
--- ═══════════════════════════════════════
---  CONSTANTES — bases sur les vraies mecaniques du jeu
---  Le parry leve un bouclier ~500ms
---  La balle est "homing" (pourchasse sa cible)
---  Timing = tout : cliquer quand ETA est dans la fenetre du bouclier
--- ═══════════════════════════════════════
-local ETA_CONFIRME = 0.43
-local ETA_ESTIME   = 0.28
-local ETA_MIN      = 0.04
-local COOLDOWN     = 0.6
-local APPROACH_MIN = 6
-local DOT_MIN      = 0.25
-local SMOOTH       = 0.35
+local cachedRouge = false
 
 -- ═══════════════════════════════════════
 --  COULEURS
@@ -88,44 +73,19 @@ LP.CharacterRemoving:Connect(function()
 end)
 
 -- ═══════════════════════════════════════
---  DETECTION BALLE — event-based, zero lag
+--  DETECTION BALLE — events + scan leger
 -- ═══════════════════════════════════════
-local function estJoueur(o)
-    local p = o.Parent
-    while p and p ~= workspace do
-        if Players:GetPlayerFromCharacter(p) then return true end
-        p = p.Parent
-    end
-    return false
-end
-
-local function estBalle(o)
-    if not (o:IsA("BasePart") or o:IsA("MeshPart")) then return false end
-    if estJoueur(o) then return false end
-    local n = o.Name:lower()
-    if n == "ball" or n == "balle" or n:find("projectile") or n:find("orb") then return true end
-    local ok1, a1 = pcall(o.GetAttribute, o, "Target")
-    if ok1 and a1 ~= nil then return true end
-    local ok2, a2 = pcall(o.GetAttribute, o, "target")
-    if ok2 and a2 ~= nil then return true end
-    return false
-end
-
 local function resetTracking()
     prevDist = 999
     closingSpd = 0
     approcheSuite = 0
     eta = 999
-    cachedCible = false
-    cachedConfirme = false
 end
 
-local function scanBalleLeger()
+local function scanBalle()
     for _, name in pairs({"Ball", "ball", "Balle", "Projectile", "projectile", "Orb", "orb"}) do
         local ok, b = pcall(workspace.FindFirstChild, workspace, name, true)
-        if ok and b and (b:IsA("BasePart") or b:IsA("MeshPart")) and not estJoueur(b) then
-            return b
-        end
+        if ok and b and (b:IsA("BasePart") or b:IsA("MeshPart")) then return b end
     end
     local ok, folder = pcall(workspace.FindFirstChild, workspace, "Balls")
     if ok and folder then
@@ -140,16 +100,19 @@ local function scanBalleLeger()
     return nil
 end
 
-local function scanBalleComplet()
-    local r = scanBalleLeger()
+local function scanComplet()
+    local r = scanBalle()
     if r then return r end
     for _, v in pairs(workspace:GetDescendants()) do
-        if estBalle(v) then return v end
-        if (v:IsA("BasePart") or v:IsA("MeshPart")) and not v.Anchored and not estJoueur(v) then
-            if v.Name ~= "Baseplate" and v.Name ~= "Terrain" then
-                local s, vel = pcall(function() return v.AssemblyLinearVelocity end)
-                if s and vel and vel.Magnitude > 30 and v.Size.Magnitude < 15 then return v end
-            end
+        if (v:IsA("BasePart") or v:IsA("MeshPart")) and not v.Anchored then
+            local n = v.Name:lower()
+            if n == "ball" or n == "balle" or n:find("projectile") or n:find("orb") then return v end
+            local a1, a2
+            pcall(function() a1 = v:GetAttribute("Target") end)
+            pcall(function() a2 = v:GetAttribute("target") end)
+            if a1 ~= nil or a2 ~= nil then return v end
+            local s, vel = pcall(function() return v.AssemblyLinearVelocity end)
+            if s and vel and vel.Magnitude > 30 and v.Size.Magnitude < 15 and v.Name ~= "Baseplate" then return v end
         end
     end
     return nil
@@ -157,7 +120,10 @@ end
 
 workspace.DescendantAdded:Connect(function(o)
     if balle and balle.Parent then return end
-    if estBalle(o) then
+    if not (o:IsA("BasePart") or o:IsA("MeshPart")) then return end
+    if o.Anchored then return end
+    local n = o.Name:lower()
+    if n == "ball" or n == "balle" or n:find("projectile") or n:find("orb") then
         balle = o
         resetTracking()
     end
@@ -169,20 +135,21 @@ workspace.DescendantRemoving:Connect(function(o)
     end
 end)
 
-balle = scanBalleComplet()
+balle = scanComplet()
 
 task.spawn(function()
     while true do
-        task.wait(3)
+        task.wait(2)
         if not balle or not balle.Parent then
-            local b = scanBalleLeger()
+            local b = scanBalle()
+            if not b then b = scanComplet() end
             if b then balle = b; resetTracking() end
         end
     end
 end)
 
 -- ═══════════════════════════════════════
---  TARGET CHECK
+--  TARGET CHECK — chaque frame pour max reactivite
 -- ═══════════════════════════════════════
 local function matchT(t)
     if t == nil then return false end
@@ -192,7 +159,7 @@ local function matchT(t)
     return false
 end
 
-local function checkTarget(b)
+local function checkAttributs(b)
     local ok, t
     ok, t = pcall(b.GetAttribute, b, "Target")
     if ok and matchT(t) then return true end
@@ -216,22 +183,38 @@ local function checkTarget(b)
     return false
 end
 
+local function charEstRouge()
+    if not cachedChar then return false end
+    for _, ch in pairs(cachedChar:GetChildren()) do
+        if ch:IsA("Highlight") then
+            local ok, fc = pcall(function() return ch.FillColor end)
+            if ok and fc and fc.R > 0.5 and fc.G < 0.35 then return true end
+            local ok2, oc = pcall(function() return ch.OutlineColor end)
+            if ok2 and oc and oc.R > 0.5 and oc.G < 0.35 then return true end
+        elseif ch:IsA("SelectionBox") then
+            local ok, c3 = pcall(function() return ch.Color3 end)
+            if ok and c3 and c3.R > 0.5 and c3.G < 0.35 then return true end
+        end
+    end
+    return false
+end
+
 -- ═══════════════════════════════════════
---  PARRY — 1 seul clic, timing parfait
+--  PARRY
 -- ═══════════════════════════════════════
-local function doParry()
+local function doParry(spd)
     local now = tick()
-    if now - dernierP < COOLDOWN then return end
+    if now - dernierP < 0.35 then return end
     dernierP = now
     compteur = compteur + 1
     streak = streak + 1
     if streak > best then best = streak end
     pcall(mouse1click)
+    if spd > 250 then pcall(mouse1click) end
     prevDist = curDist
     closingSpd = 0
     approcheSuite = 0
     eta = 999
-    cachedCible = false
 end
 
 -- ═══════════════════════════════════════
@@ -247,7 +230,7 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════
---  GUI — compact, 1 mode, propre
+--  GUI
 -- ═══════════════════════════════════════
 local gui = Instance.new("ScreenGui")
 gui.Name = rkey()
@@ -266,9 +249,9 @@ local function rnd(p, r)
     mk("UICorner", {CornerRadius = UDim.new(0, r or 8), Parent = p})
 end
 
-local W = 340
-local H_OPEN = 400
-local H_CLOSED = 46
+local W = 320
+local H_OPEN = 360
+local H_CLOSED = 44
 
 local panel = mk("Frame", {
     Size = UDim2.new(0, W, 0, H_OPEN),
@@ -279,16 +262,15 @@ local panel = mk("Frame", {
 rnd(panel, 12)
 mk("UIStroke", {Color = BORD, Thickness = 1, Parent = panel})
 
--- HEADER
-local hdr = mk("Frame", {Size = UDim2.new(1, 0, 0, 46), BackgroundColor3 = BG2, Parent = panel})
+local hdr = mk("Frame", {Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = BG2, Parent = panel})
 rnd(hdr, 12)
-mk("Frame", {Size = UDim2.new(1, -24, 0, 2), Position = UDim2.new(0, 12, 0, 0), BackgroundColor3 = ACCENT, Parent = hdr})
-local statusDot = mk("Frame", {Size = UDim2.new(0, 10, 0, 10), Position = UDim2.new(0, 14, 0, 18), BackgroundColor3 = GREEN, Parent = hdr})
+mk("Frame", {Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 0), BackgroundColor3 = ACCENT, Parent = hdr})
+local statusDot = mk("Frame", {Size = UDim2.new(0, 10, 0, 10), Position = UDim2.new(0, 12, 0, 17), BackgroundColor3 = GREEN, Parent = hdr})
 rnd(statusDot, 5)
-local statusLbl = mk("TextLabel", {Size = UDim2.new(0, 56, 0, 14), Position = UDim2.new(0, 30, 0, 16), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
-mk("TextLabel", {Size = UDim2.new(0, 180, 0, 14), Position = UDim2.new(0, 90, 0, 16), BackgroundTransparency = 1, Text = "AUTO PARRY v14", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
-local btnMin = mk("TextButton", {Size = UDim2.new(0, 30, 0, 30), Position = UDim2.new(1, -40, 0, 8), BackgroundColor3 = BG4, Text = "-", TextColor3 = TXT2, Font = Enum.Font.GothamBold, TextSize = 16, Parent = hdr})
-rnd(btnMin, 8)
+local statusLbl = mk("TextLabel", {Size = UDim2.new(0, 50, 0, 14), Position = UDim2.new(0, 28, 0, 15), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
+mk("TextLabel", {Size = UDim2.new(0, 140, 0, 14), Position = UDim2.new(0, 82, 0, 15), BackgroundTransparency = 1, Text = "AUTO PARRY v15", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
+local btnMin = mk("TextButton", {Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -36, 0, 8), BackgroundColor3 = BG4, Text = "-", TextColor3 = TXT2, Font = Enum.Font.GothamBold, TextSize = 15, Parent = hdr})
+rnd(btnMin, 7)
 btnMin.MouseButton1Click:Connect(function()
     ouvert = not ouvert
     btnMin.Text = ouvert and "-" or "+"
@@ -297,37 +279,32 @@ btnMin.MouseButton1Click:Connect(function()
     }):Play()
 end)
 
--- SECTION BUILDER
 local function sect(y, titre, h)
-    local c = mk("Frame", {Size = UDim2.new(1, -24, 0, h), Position = UDim2.new(0, 12, 0, y), BackgroundColor3 = BG2, Parent = panel})
-    rnd(c, 10)
-    mk("TextLabel", {Size = UDim2.new(1, -16, 0, 11), Position = UDim2.new(0, 8, 0, 6), BackgroundTransparency = 1, Text = string.upper(titre), TextColor3 = ACCENT, Font = Enum.Font.GothamBold, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, Parent = c})
+    local c = mk("Frame", {Size = UDim2.new(1, -20, 0, h), Position = UDim2.new(0, 10, 0, y), BackgroundColor3 = BG2, Parent = panel})
+    rnd(c, 9)
+    mk("TextLabel", {Size = UDim2.new(1, -14, 0, 10), Position = UDim2.new(0, 7, 0, 5), BackgroundTransparency = 1, Text = string.upper(titre), TextColor3 = ACCENT, Font = Enum.Font.GothamBold, TextSize = 8, TextXAlignment = Enum.TextXAlignment.Left, Parent = c})
     return c
 end
 
--- STATS
-local sc = sect(52, "Stats", 52)
-local bw = math.floor((W - 24 - 20) / 3)
+local sc = sect(50, "Stats", 48)
+local bw = math.floor((W - 20 - 16) / 3)
 local function sbox(parent, x, lbl, col)
-    mk("TextLabel", {Size = UDim2.new(0, bw, 0, 9), Position = UDim2.new(0, x, 0, 20), BackgroundTransparency = 1, Text = string.upper(lbl), TextColor3 = col, Font = Enum.Font.GothamBold, TextSize = 8, Parent = parent})
-    return mk("TextLabel", {Size = UDim2.new(0, bw, 0, 18), Position = UDim2.new(0, x, 0, 30), BackgroundTransparency = 1, Text = "0", TextColor3 = TXT1, Font = Enum.Font.GothamBold, TextSize = 17, Parent = parent})
+    mk("TextLabel", {Size = UDim2.new(0, bw, 0, 9), Position = UDim2.new(0, x, 0, 18), BackgroundTransparency = 1, Text = string.upper(lbl), TextColor3 = col, Font = Enum.Font.GothamBold, TextSize = 7, Parent = parent})
+    return mk("TextLabel", {Size = UDim2.new(0, bw, 0, 16), Position = UDim2.new(0, x, 0, 28), BackgroundTransparency = 1, Text = "0", TextColor3 = TXT1, Font = Enum.Font.GothamBold, TextSize = 16, Parent = parent})
 end
-local lP = sbox(sc, 8, "Parrys", ACCENT)
-local lS = sbox(sc, 8 + bw + 10, "Streak", ORANGE)
-local lB = sbox(sc, 8 + bw * 2 + 20, "Record", YELLOW)
+local lP = sbox(sc, 7, "Parrys", ACCENT)
+local lS = sbox(sc, 7 + bw + 8, "Streak", ORANGE)
+local lB = sbox(sc, 7 + bw * 2 + 16, "Record", YELLOW)
 
--- BALLE
-local bc = sect(110, "Balle", 90)
-local lBalle = mk("TextLabel", {Size = UDim2.new(1, -16, 0, 12), Position = UDim2.new(0, 8, 0, 20), BackgroundTransparency = 1, Text = "Recherche...", TextColor3 = ORANGE, Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = bc})
-local lInfo = mk("TextLabel", {Size = UDim2.new(1, -16, 0, 11), Position = UDim2.new(0, 8, 0, 36), BackgroundTransparency = 1, Text = "", TextColor3 = TXT2, Font = Enum.Font.Code, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = bc})
-local lEta = mk("TextLabel", {Size = UDim2.new(1, -16, 0, 11), Position = UDim2.new(0, 8, 0, 50), BackgroundTransparency = 1, Text = "", TextColor3 = YELLOW, Font = Enum.Font.Code, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = bc})
-local lMode = mk("TextLabel", {Size = UDim2.new(1, -16, 0, 11), Position = UDim2.new(0, 8, 0, 66), BackgroundTransparency = 1, Text = "", TextColor3 = GREEN, Font = Enum.Font.Code, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = bc})
+local bc = sect(104, "Balle", 80)
+local lBalle = mk("TextLabel", {Size = UDim2.new(1, -14, 0, 11), Position = UDim2.new(0, 7, 0, 18), BackgroundTransparency = 1, Text = "Recherche...", TextColor3 = ORANGE, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = bc})
+local lInfo = mk("TextLabel", {Size = UDim2.new(1, -14, 0, 11), Position = UDim2.new(0, 7, 0, 32), BackgroundTransparency = 1, Text = "", TextColor3 = TXT2, Font = Enum.Font.Code, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, Parent = bc})
+local lEta = mk("TextLabel", {Size = UDim2.new(1, -14, 0, 11), Position = UDim2.new(0, 7, 0, 46), BackgroundTransparency = 1, Text = "", TextColor3 = YELLOW, Font = Enum.Font.Code, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, Parent = bc})
+local lMode = mk("TextLabel", {Size = UDim2.new(1, -14, 0, 11), Position = UDim2.new(0, 7, 0, 60), BackgroundTransparency = 1, Text = "", TextColor3 = GREEN, Font = Enum.Font.Code, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, Parent = bc})
 
--- TOGGLE
-local tBg = mk("Frame", {Size = UDim2.new(1, -24, 0, 36), Position = UDim2.new(0, 12, 0, 206), BackgroundColor3 = GREEN, Parent = panel})
-rnd(tBg, 10)
-local tBtn = mk("TextButton", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "ACTIF — Cliquer pour desactiver", TextColor3 = TXT1, Font = Enum.Font.GothamBold, TextSize = 12, Parent = tBg})
-
+local tBg = mk("Frame", {Size = UDim2.new(1, -20, 0, 32), Position = UDim2.new(0, 10, 0, 190), BackgroundColor3 = GREEN, Parent = panel})
+rnd(tBg, 9)
+local tBtn = mk("TextButton", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "ACTIF — Cliquer pour desactiver", TextColor3 = TXT1, Font = Enum.Font.GothamBold, TextSize = 11, Parent = tBg})
 local function majToggle()
     tBg.BackgroundColor3 = actif and GREEN or RED
     tBtn.Text = actif and "ACTIF — Cliquer pour desactiver" or "INACTIF — Cliquer pour activer"
@@ -337,29 +314,23 @@ local function majToggle()
 end
 tBtn.MouseButton1Click:Connect(function() actif = not actif; majToggle() end)
 
--- INFO
-local ic = sect(248, "Comment ca marche", 90)
+local ic = sect(228, "Info", 72)
 mk("TextLabel", {
-    Size = UDim2.new(1, -16, 0, 72), Position = UDim2.new(0, 8, 0, 20),
+    Size = UDim2.new(1, -14, 0, 56), Position = UDim2.new(0, 7, 0, 18),
     BackgroundTransparency = 1, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left,
-    Text = "Calcule le temps d'impact (ETA) de la balle\n1 clic au moment parfait (bouclier = 500ms)\nConfirme par attributs du jeu + velocite\nZero faux clic | Anti-detection total\n\nRShift = On/Off  |  RCtrl = Masquer",
-    TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 9, Parent = ic,
+    Text = "Confirme = parry agressif (distance + vitesse)\nEstime = parry prudent (ETA + approche)\n1-2 clics | Cooldown 0.35s | Anti-detection\n\nRShift = On/Off  |  RCtrl = Masquer",
+    TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 8, Parent = ic,
 })
 
--- BOUTONS
-local btnScan = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 26), Position = UDim2.new(0, 12, 0, 344), BackgroundColor3 = BG3, Text = "Chercher balle", TextColor3 = TXT2, Font = Enum.Font.Gotham, TextSize = 10, Parent = panel})
+local btnScan = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 24), Position = UDim2.new(0, 10, 0, 306), BackgroundColor3 = BG3, Text = "Chercher balle", TextColor3 = TXT2, Font = Enum.Font.Gotham, TextSize = 9, Parent = panel})
 rnd(btnScan, 6)
-btnScan.MouseButton1Click:Connect(function()
-    balle = scanBalleComplet()
-    resetTracking()
-end)
-local btnRst = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 26), Position = UDim2.new(0.53, 0, 0, 344), BackgroundColor3 = BG3, Text = "Reset stats", TextColor3 = TXT2, Font = Enum.Font.Gotham, TextSize = 10, Parent = panel})
+btnScan.MouseButton1Click:Connect(function() balle = scanComplet(); resetTracking() end)
+local btnRst = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 24), Position = UDim2.new(0.53, 0, 0, 306), BackgroundColor3 = BG3, Text = "Reset stats", TextColor3 = TXT2, Font = Enum.Font.Gotham, TextSize = 9, Parent = panel})
 rnd(btnRst, 6)
 btnRst.MouseButton1Click:Connect(function() compteur = 0; streak = 0; best = 0 end)
 
-mk("TextLabel", {Size = UDim2.new(1, -24, 0, 20), Position = UDim2.new(0, 12, 0, 374), BackgroundTransparency = 1, Text = "v14 | ETA Timing | github.com/lapsy4trie1337-code", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 8, Parent = panel})
+mk("TextLabel", {Size = UDim2.new(1, -20, 0, 16), Position = UDim2.new(0, 10, 0, 336), BackgroundTransparency = 1, Text = "v15 | Ultra Reactif | Zero Lag", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
 
--- FLASH (feedback parry)
 local flash = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = ACCENT, BackgroundTransparency = 1, ZIndex = 100, Parent = gui})
 
 -- DRAG
@@ -377,7 +348,6 @@ UIS.InputEnded:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then dd = nil end
 end)
 
--- RACCOURCIS
 UIS.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     if input.KeyCode == Enum.KeyCode.RightShift then
@@ -390,11 +360,13 @@ end)
 gui.Parent = LP:WaitForChild("PlayerGui")
 
 -- ═══════════════════════════════════════
---  BOUCLE PRINCIPALE — ultra optimisee
+--  BOUCLE PRINCIPALE
 --
---  Chaque frame : distance + closing speed + ETA (ultra leger)
---  Toutes les 4 frames : check attributs cible
---  Toutes les 15 frames : mise a jour UI
+--  CONFIRME (attribut) = parry agressif par distance + vitesse
+--  ESTIME (velocite)   = parry prudent par ETA + approche
+--
+--  Attributs checkes CHAQUE FRAME pour zero delai
+--  UI mise a jour toutes les 15 frames
 -- ═══════════════════════════════════════
 RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
     frameN = frameN + 1
@@ -414,7 +386,6 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
     if not hrp then majChar(); hrp = cachedHRP end
     if not hrp then return end
 
-    -- ── Position + distance (chaque frame) ──
     local okP, bPos = pcall(function() return b.Position end)
     if not okP then balle = nil; return end
     local hPos = hrp.Position
@@ -424,13 +395,17 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
     local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
     curDist = dist
 
-    -- ── Closing speed + tracking approche (chaque frame) ──
+    -- Closing speed (lissage rapide 0.5)
     local now = tick()
     local dt = now - prevTime
     if dt > 0.005 then
         local raw = (prevDist - dist) / dt
-        closingSpd = closingSpd * (1 - SMOOTH) + raw * SMOOTH
-        if dist < prevDist - 0.3 then
+        if closingSpd == 0 and raw > 0 then
+            closingSpd = raw
+        else
+            closingSpd = closingSpd * 0.5 + raw * 0.5
+        end
+        if dist < prevDist - 0.2 then
             approcheSuite = approcheSuite + 1
         else
             approcheSuite = 0
@@ -439,43 +414,43 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
         prevTime = now
     end
 
-    if closingSpd > 3 then
+    if closingSpd > 2 then
         eta = dist / closingSpd
     else
         eta = 999
     end
 
-    -- ── Target check (toutes les 4 frames) ──
-    if frameN % 4 == 0 then
-        cachedConfirme = checkTarget(b)
-        if cachedConfirme then
-            cachedCible = true
-        else
-            local velOk, vel = pcall(function() return b.AssemblyLinearVelocity end)
-            if not velOk then velOk, vel = pcall(function() return b.Velocity end) end
-            if velOk and vel then
-                local spd = vel.Magnitude
-                if spd > 10 and dist > 0.5 then
-                    local invD = 1 / dist
-                    local invS = 1 / spd
-                    local dotP = (vel.X * invS) * ((-dx) * invD) + (vel.Y * invS) * ((-dy) * invD) + (vel.Z * invS) * ((-dz) * invD)
-                    cachedCible = dotP > DOT_MIN and approcheSuite >= APPROACH_MIN and closingSpd > 15
-                else
-                    cachedCible = false
-                end
-            else
-                cachedCible = false
-            end
+    -- Vitesse balle
+    local velOk, vel = pcall(function() return b.AssemblyLinearVelocity end)
+    if not velOk then velOk, vel = pcall(function() return b.Velocity end) end
+    local spd = (velOk and vel) and vel.Magnitude or 0
+
+    -- ═══ DETECTION + PARRY ═══
+
+    if frameN % 4 == 0 then cachedRouge = charEstRouge() end
+
+    -- 1) CONFIRME — attribut OU personnage rouge = on sait que c'est nous
+    --    Parry AGRESSIF : distance + vitesse + PREDICTION
+    local confirme = checkAttributs(b) or cachedRouge
+
+    if actif and confirme then
+        local seuil = math.clamp(12 + spd * 0.14, 12, 75)
+
+        local predFrames = 3
+        if spd > 300 then predFrames = 5
+        elseif spd > 150 then predFrames = 4 end
+
+        local predDist = dist
+        if velOk and vel and spd > 5 then
+            local pdt = predFrames / 60
+            local px = bPos.X + vel.X * pdt - hPos.X
+            local py = bPos.Y + vel.Y * pdt - hPos.Y
+            local pz = bPos.Z + vel.Z * pdt - hPos.Z
+            predDist = math.sqrt(px * px + py * py + pz * pz)
         end
-    end
 
-    if not cachedCible then streak = 0 end
-
-    -- ── PARRY — timing base sur ETA ──
-    if actif and cachedCible then
-        local seuil = cachedConfirme and ETA_CONFIRME or ETA_ESTIME
-        if eta > ETA_MIN and eta < seuil then
-            doParry()
+        if dist < seuil or predDist < seuil then
+            doParry(spd)
             pcall(function()
                 flash.BackgroundTransparency = 0.85
                 TweenService:Create(flash, TweenInfo.new(0.08), {BackgroundTransparency = 1}):Play()
@@ -483,7 +458,24 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
         end
     end
 
-    -- ── UI (toutes les 15 frames ~4fps) ──
+    -- 2) ESTIME — velocite seulement, etre prudent
+    --    Parry quand ETA < 0.38s + balle approche 3+ frames + dot > 0.2
+    if actif and not confirme and velOk and vel and spd > 10 and dist > 0.5 then
+        local invD = 1 / dist
+        local invS = 1 / spd
+        local dotP = (vel.X * invS) * ((-dx) * invD) + (vel.Y * invS) * ((-dy) * invD) + (vel.Z * invS) * ((-dz) * invD)
+        if dotP > 0.2 and approcheSuite >= 3 and closingSpd > 10 and eta > 0.03 and eta < 0.38 then
+            doParry(spd)
+            pcall(function()
+                flash.BackgroundTransparency = 0.85
+                TweenService:Create(flash, TweenInfo.new(0.08), {BackgroundTransparency = 1}):Play()
+            end)
+        end
+    end
+
+    if not confirme and approcheSuite < 3 then streak = 0 end
+
+    -- ═══ UI (toutes les 15 frames) ═══
     if frameN % 15 ~= 0 then return end
 
     lP.Text = tostring(compteur)
@@ -492,40 +484,31 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
     lBalle.Text = b.Name
     lBalle.TextColor3 = GREEN
 
-    if cachedCible then
-        local cs = closingSpd
-        if cs < 0 then cs = 0 end
-        lInfo.Text = "Dist " .. math.floor(dist) .. " | Approche " .. math.floor(cs) .. "/s"
+    if confirme then
+        local seuil = math.clamp(12 + spd * 0.14, 12, 75)
+        lInfo.Text = "Dist " .. math.floor(dist) .. "/" .. math.floor(seuil) .. " | Vit " .. math.floor(spd)
         lInfo.TextColor3 = YELLOW
+        lEta.Text = "Zone parry: " .. math.floor(seuil) .. " studs"
+        lEta.TextColor3 = dist < seuil and RED or YELLOW
+        lMode.Text = "CONFIRME"
+        lMode.TextColor3 = GREEN
+    elseif approcheSuite >= 3 and closingSpd > 10 then
+        lInfo.Text = "Dist " .. math.floor(dist) .. " | Approche " .. math.floor(closingSpd) .. "/s"
+        lInfo.TextColor3 = ORANGE
         if eta < 30 then
             lEta.Text = "ETA " .. string.format("%.2f", eta) .. "s"
         else
             lEta.Text = "ETA ---"
         end
         lEta.TextColor3 = eta < 0.5 and RED or YELLOW
-        lMode.Text = cachedConfirme and "CONFIRME" or "ESTIME"
-        lMode.TextColor3 = cachedConfirme and GREEN or ORANGE
+        lMode.Text = "ESTIME"
+        lMode.TextColor3 = ORANGE
     else
-        lInfo.Text = "Pas cible"
+        lInfo.Text = "Dist " .. math.floor(dist) .. " | Vit " .. math.floor(spd)
         lInfo.TextColor3 = TXT3
         lEta.Text = ""
         lMode.Text = ""
     end
 end)
 
--- Pulsation status
-task.spawn(function()
-    while true do
-        if actif then
-            pcall(function() TweenService:Create(statusDot, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundTransparency = 0.5}):Play() end)
-            task.wait(0.8)
-            pcall(function() TweenService:Create(statusDot, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundTransparency = 0}):Play() end)
-            task.wait(0.8)
-        else
-            statusDot.BackgroundTransparency = 0
-            task.wait(0.5)
-        end
-    end
-end)
-
-print("[AutoParry] v14 charge | ETA timing | Zero lag")
+print("[AutoParry] v15 | Ultra Reactif | Zero Lag")

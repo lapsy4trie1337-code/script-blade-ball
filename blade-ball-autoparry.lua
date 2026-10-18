@@ -1,6 +1,6 @@
--- Auto Parry v25
+-- Auto Parry v26
 -- Normal: INCHANGE (rouge + dist)
--- Entrainement: ChildAdded + position-delta velocity + dist 18
+-- Entrainement: detection robuste + dist 20 + debug
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -45,21 +45,25 @@ local function checkRouge()
     if ok and h then charRouge = true end
 end
 
--- Balls folder + ball state tracking (position delta = velocity)
+-- Balls folder (auto-refresh si detruit/recree)
 local ballsFolder = nil
-local ballStates = {}
+
+local function attachBallsFolder(f)
+    ballsFolder = f
+    print("[AutoParry] Balls folder trouve: " .. tostring(f) .. " children=" .. #f:GetChildren())
+end
 
 task.spawn(function()
     local ok, f = pcall(workspace.WaitForChild, workspace, "Balls", 60)
-    if not ok or not f then return end
-    ballsFolder = f
-    local function onBall(b)
-        if not b:IsA("BasePart") then return end
-        pcall(function() ballStates[b] = { pos = b.Position, t = tick() } end)
-    end
-    for _, c in pairs(f:GetChildren()) do onBall(c) end
-    f.ChildAdded:Connect(onBall)
-    f.ChildRemoved:Connect(function(b) ballStates[b] = nil end)
+    if ok and f then attachBallsFolder(f) end
+end)
+
+pcall(function()
+    workspace.ChildAdded:Connect(function(child)
+        if child.Name == "Balls" then
+            attachBallsFolder(child)
+        end
+    end)
 end)
 
 -- Parry
@@ -137,7 +141,7 @@ mk("Frame", {Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 0), 
 local statusDot = mk("Frame", {Size = UDim2.new(0, 10, 0, 10), Position = UDim2.new(0, 12, 0, 16), BackgroundColor3 = GREEN, Parent = hdr})
 rnd(statusDot, 5)
 local statusLbl = mk("TextLabel", {Size = UDim2.new(0, 50, 0, 14), Position = UDim2.new(0, 28, 0, 14), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
-mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v25", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
+mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v26", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
 local btnMin = mk("TextButton", {Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -34, 0, 8), BackgroundColor3 = BG4, Text = "-", TextColor3 = TXT2, Font = Enum.Font.GothamBold, TextSize = 14, Parent = hdr})
 rnd(btnMin, 7)
 btnMin.MouseButton1Click:Connect(function()
@@ -216,7 +220,7 @@ local btnRst = mk("TextButton", {Size = UDim2.new(1, -20, 0, 22), Position = UDi
 rnd(btnRst, 6)
 btnRst.MouseButton1Click:Connect(function() compteur = 0; streak = 0; best = 0 end)
 
-mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 302), BackgroundTransparency = 1, Text = "v25 | ChildAdded + PosDelta", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
+mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 302), BackgroundTransparency = 1, Text = "v26 | Debug + Robust", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
 
 local flash = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = GREEN, BackgroundTransparency = 1, ZIndex = 100, Parent = gui})
 
@@ -248,7 +252,7 @@ gui.Parent = LP:WaitForChild("PlayerGui")
 -- ═══════════════════════════════════════
 --  CORE
 --  Normal: realBall + (rouge OU dist<8) + dist<13 (INCHANGE)
---  Entrainement: dist<18 + position-delta vel + ETA 18-40
+--  Entrainement: dist<20 ultra simple + debug prints
 -- ═══════════════════════════════════════
 local uiDist = 9999
 local uiBalle = false
@@ -263,10 +267,11 @@ RunService.Heartbeat:Connect(function()
     -- Rouge check toutes les 2 frames
     if frameN % 2 == 0 then checkRouge() end
 
-    -- Chercher le folder
-    if not ballsFolder then
+    -- Chercher/refresh le folder (stale = Parent nil)
+    if not ballsFolder or not ballsFolder.Parent then
+        ballsFolder = nil
         local ok, f = pcall(workspace.FindFirstChild, workspace, "Balls")
-        if ok and f then ballsFolder = f end
+        if ok and f then attachBallsFolder(f) end
     end
     if not ballsFolder then return end
 
@@ -289,40 +294,8 @@ RunService.Heartbeat:Connect(function()
         if didParry then continue end
 
         if modeEntrainement then
-            -- Training: PAS de check Anchored, velocity par position delta
-            local st = ballStates[ball]
-            if not st then
-                ballStates[ball] = { pos = bPos, t = tick() }
-                st = ballStates[ball]
-            end
-
-            local now = tick()
-            local dt = now - st.t
-            local vel = Vector3.zero
-            if dt > 0.005 then
-                vel = (bPos - st.pos) / dt
-                st.pos = bPos
-                st.t = now
-            end
-
-            local okV, bVel = pcall(function() return ball.Velocity end)
-            if okV and bVel and bVel.Magnitude > vel.Magnitude then
-                vel = bVel
-            end
-
-            local tParry = false
-            if dist <= 18 then
-                tParry = true
-            elseif dist <= 40 and vel.Magnitude > 10 then
-                local dir = (hPos - bPos).Unit
-                local vt = vel:Dot(dir)
-                if vt > 10 then
-                    local eta = dist / vt
-                    if eta <= 0.18 then tParry = true end
-                end
-            end
-
-            if tParry then
+            -- Training: ULTRA SIMPLE — distance seule, pas de filtre
+            if dist <= 20 then
                 if doParry() then
                     didParry = true
                     pcall(function()
@@ -353,6 +326,14 @@ RunService.Heartbeat:Connect(function()
 
     if not didParry and closestDist > 50 then streak = 0 end
 
+    -- Debug training (toutes les 2 sec)
+    if modeEntrainement and frameN % 120 == 0 then
+        local nBase = 0
+        local nTotal = #children
+        for _, b in pairs(children) do if b:IsA("BasePart") then nBase = nBase + 1 end end
+        print("[Train] folder=" .. tostring(ballsFolder ~= nil) .. " total=" .. nTotal .. " baseParts=" .. nBase .. " closest=" .. math.floor(closestDist))
+    end
+
     -- UI
     if frameN % 20 ~= 0 then return end
     lP.Text = tostring(compteur)
@@ -370,4 +351,4 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
-print("[AutoParry] v25 | ChildAdded + PosDelta + dist18")
+print("[AutoParry] v26 | Debug + dist20 | Si sa marche pas, regarde la console F9")

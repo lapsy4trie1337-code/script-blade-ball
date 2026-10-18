@@ -172,6 +172,27 @@ local function scanBalles()
         end
     end
 
+    -- Fallback: si entrainement et rien trouve, chercher partout
+    if modeEntrainement and #balles == 0 then
+        local ok3, desc = pcall(workspace.GetDescendants, workspace)
+        if ok3 then
+            for _, v in pairs(desc) do
+                if v:IsA("BasePart") and not v.Anchored then
+                    local n = v.Name:lower()
+                    if n:find("ball") or n:find("orb") or n:find("proj") then
+                        local p = v.Parent
+                        local isPlayer = false
+                        while p and p ~= workspace do
+                            if Players:GetPlayerFromCharacter(p) then isPlayer = true; break end
+                            p = p.Parent
+                        end
+                        if not isPlayer then ajouterBalle(v) end
+                    end
+                end
+            end
+        end
+    end
+
     for i = #balles, 1, -1 do
         if not balles[i].Parent then retirerBalle(balles[i]) end
     end
@@ -538,8 +559,10 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
 
         if confirme then uiConfirme = true end
 
-        -- PARRY: confirme + (ETA < 150ms OU dist < 12) + balle approche
-        if confirme and (eta < 0.15 or dist < 12) and dot > 0.1 and not didParry then
+        -- PARRY: confirme + balle proche + balle approche
+        local seuilEta = modeEntrainement and 0.3 or 0.15
+        local seuilDist = modeEntrainement and 20 or 12
+        if confirme and (eta < seuilEta or dist < seuilDist) and dot > 0.1 and not didParry then
             if doParry() then
                 didParry = true
                 pcall(function()

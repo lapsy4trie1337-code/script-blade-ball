@@ -246,10 +246,10 @@ end
 -- ═══════════════════════════════════════
 local function doParry(spd, dist)
     local now = tick()
-    -- Cooldown 0.35s = bouclier dure ~0.5s, on peut re-parry apres feinte
-    -- Feinte reset le cooldown a 0 pour parry instantane
-    local cd = 0.35
-    if spd > 200 then cd = 0.25 end
+    -- Cooldown bas = reagir a tout prix
+    local cd = 0.2
+    if spd > 150 then cd = 0.1 end
+    if feintDetectee then cd = 0.02 end
 
     if now - dernierP < cd then return false end
     dernierP = now
@@ -258,9 +258,7 @@ local function doParry(spd, dist)
     if streak > best then best = streak end
 
     pcall(mouse1click)
-    if spd > 100 then
-        pcall(mouse1click)
-    end
+    pcall(mouse1click)
     return true
 end
 
@@ -315,7 +313,7 @@ mk("Frame", {Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 0), 
 local statusDot = mk("Frame", {Size = UDim2.new(0, 10, 0, 10), Position = UDim2.new(0, 12, 0, 16), BackgroundColor3 = GREEN, Parent = hdr})
 rnd(statusDot, 5)
 local statusLbl = mk("TextLabel", {Size = UDim2.new(0, 50, 0, 14), Position = UDim2.new(0, 28, 0, 14), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
-mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v17.3", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
+mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v17.4", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
 local btnMin = mk("TextButton", {Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -34, 0, 8), BackgroundColor3 = BG4, Text = "-", TextColor3 = TXT2, Font = Enum.Font.GothamBold, TextSize = 14, Parent = hdr})
 rnd(btnMin, 7)
 btnMin.MouseButton1Click:Connect(function()
@@ -380,7 +378,7 @@ local btnRst = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 22), Position = UD
 rnd(btnRst, 6)
 btnRst.MouseButton1Click:Connect(function() compteur = 0; streak = 0; best = 0 end)
 
-mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 294), BackgroundTransparency = 1, Text = "v17.3 | Anti-Feinte", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
+mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 294), BackgroundTransparency = 1, Text = "v17.4 | Survie Max", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
 
 local flash = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = GREEN, BackgroundTransparency = 1, ZIndex = 100, Parent = gui})
 
@@ -489,10 +487,21 @@ local function coreCheck()
 
     local seuil = math.clamp(12 + calcSpd * 0.12, 12, 55)
 
-    -- ═══ PARRY ═══
-    -- Confirme + proche = PARRY (pas besoin de check approche, la balle courbe)
-    -- Feinte detectee = parry instantane (cooldown reset)
+    -- ═══ PARRY — SURVIE A TOUT PRIX ═══
+    -- 1) CONFIRME (rouge/attribut) + proche = PARRY
+    -- 2) SECURITE : meme sans rouge, si balle TRES proche + fonce sur moi = PARRY
+    --    (filet de securite pour jamais mourir)
+    local doit_parry = false
+
     if confirme and distEff < seuil then
+        doit_parry = true
+    elseif dot > 0.5 and dist < 18 and calcSpd > 30 then
+        doit_parry = true
+    elseif dist < 10 and dot > 0.3 then
+        doit_parry = true
+    end
+
+    if doit_parry then
         local ok = doParry(calcSpd, dist)
         if ok then
             pcall(function()
@@ -502,7 +511,7 @@ local function coreCheck()
         end
     end
 
-    if not confirme then streak = 0 end
+    if not confirme and dist > 60 then streak = 0 end
 end
 
 -- ═══════════════════════════════════════
@@ -566,4 +575,4 @@ RunService.Heartbeat:Connect(function()
     coreCheck()
 end)
 
-print("[AutoParry] v17.3 | Anti-feinte | Re-parry instantane apres feinte")
+print("[AutoParry] v17.4 | Survie max | Anti-feinte + filet securite")

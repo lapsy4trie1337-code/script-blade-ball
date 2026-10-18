@@ -43,6 +43,10 @@ local prevBPos = nil
 local prevBTime = 0
 local calcSpd = 0
 
+-- Anti-feinte : tracking direction
+local prevDot = 0
+local feintDetectee = false
+
 -- ═══════════════════════════════════════
 --  COULEURS
 -- ═══════════════════════════════════════
@@ -242,8 +246,10 @@ end
 -- ═══════════════════════════════════════
 local function doParry(spd, dist)
     local now = tick()
-    local cd = 0.08
-    if spd > 120 then cd = 0.03 end
+    -- Cooldown 0.35s = bouclier dure ~0.5s, on peut re-parry apres feinte
+    -- Feinte reset le cooldown a 0 pour parry instantane
+    local cd = 0.35
+    if spd > 200 then cd = 0.25 end
 
     if now - dernierP < cd then return false end
     dernierP = now
@@ -252,7 +258,7 @@ local function doParry(spd, dist)
     if streak > best then best = streak end
 
     pcall(mouse1click)
-    if spd > 120 and dist < 25 then
+    if spd > 100 then
         pcall(mouse1click)
     end
     return true
@@ -309,7 +315,7 @@ mk("Frame", {Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 0), 
 local statusDot = mk("Frame", {Size = UDim2.new(0, 10, 0, 10), Position = UDim2.new(0, 12, 0, 16), BackgroundColor3 = GREEN, Parent = hdr})
 rnd(statusDot, 5)
 local statusLbl = mk("TextLabel", {Size = UDim2.new(0, 50, 0, 14), Position = UDim2.new(0, 28, 0, 14), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
-mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v17.2", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
+mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v17.3", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
 local btnMin = mk("TextButton", {Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -34, 0, 8), BackgroundColor3 = BG4, Text = "-", TextColor3 = TXT2, Font = Enum.Font.GothamBold, TextSize = 14, Parent = hdr})
 rnd(btnMin, 7)
 btnMin.MouseButton1Click:Connect(function()
@@ -374,7 +380,7 @@ local btnRst = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 22), Position = UD
 rnd(btnRst, 6)
 btnRst.MouseButton1Click:Connect(function() compteur = 0; streak = 0; best = 0 end)
 
-mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 294), BackgroundTransparency = 1, Text = "v17.2 | Ultra Reactif", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
+mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 294), BackgroundTransparency = 1, Text = "v17.3 | Anti-Feinte", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
 
 local flash = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = GREEN, BackgroundTransparency = 1, ZIndex = 100, Parent = gui})
 
@@ -464,21 +470,29 @@ local function coreCheck()
         if predDist < dist then distEff = predDist end
     end
 
-    -- Balle approche? (dot product direction vs joueur)
-    local approche = false
-    if calcSpd > 5 then
+    -- ═══ ANTI-FEINTE : detecte chaque changement de direction ═══
+    local dot = 0
+    if calcSpd > 5 and dist > 0.1 then
         local dirX = -dx / dist
         local dirY = -dy / dist
         local dirZ = -dz / dist
-        local dot = (velX * dirX + velY * dirY + velZ * dirZ) / calcSpd
-        approche = dot > 0.3
+        dot = (velX * dirX + velY * dirY + velZ * dirZ) / calcSpd
     end
+
+    -- Feinte = la balle allait s'eloigner (dot negatif) et revient (dot positif)
+    feintDetectee = false
+    if prevDot < -0.1 and dot > 0.2 then
+        feintDetectee = true
+        dernierP = 0
+    end
+    prevDot = dot
 
     local seuil = math.clamp(12 + calcSpd * 0.12, 12, 55)
 
     -- ═══ PARRY ═══
-    -- Confirme + (proche OU prediction proche) + balle approche
-    if confirme and distEff < seuil and approche then
+    -- Confirme + proche = PARRY (pas besoin de check approche, la balle courbe)
+    -- Feinte detectee = parry instantane (cooldown reset)
+    if confirme and distEff < seuil then
         local ok = doParry(calcSpd, dist)
         if ok then
             pcall(function()
@@ -552,4 +566,4 @@ RunService.Heartbeat:Connect(function()
     coreCheck()
 end)
 
-print("[AutoParry] v17.2 | Ultra reactif | Prediction 5 frames | Seuil 12-55")
+print("[AutoParry] v17.3 | Anti-feinte | Re-parry instantane apres feinte")

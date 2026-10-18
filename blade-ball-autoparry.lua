@@ -275,7 +275,8 @@ end
 -- ═══════════════════════════════════════
 local function doParry()
     local now = tick()
-    if now - dernierP < 0.3 then return false end
+    local cd = modeEntrainement and 0.15 or 0.3
+    if now - dernierP < cd then return false end
     dernierP = now
     compteur = compteur + 1
     streak = streak + 1
@@ -530,7 +531,8 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
 
         -- ETA
         local eta = 9999
-        if st.closingSpd > 3 then eta = dist / st.closingSpd end
+        local minClose = modeEntrainement and 0.5 or 3
+        if st.closingSpd > minClose then eta = dist / st.closingSpd end
 
         -- Prediction 5 frames
         if st.spd > 15 then
@@ -555,14 +557,20 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
         -- Confirme?
         local confirme = charRouge
         if not confirme and doAttr then confirme = checkAttributs(b) end
-        if not confirme and modeEntrainement and dot > 0.2 then confirme = true end
+        if not confirme and modeEntrainement then
+            if st.closingSpd > 0 or dist < 30 then confirme = true end
+        end
 
         if confirme then uiConfirme = true end
 
         -- PARRY: confirme + balle proche + balle approche
-        local seuilEta = modeEntrainement and 0.3 or 0.15
-        local seuilDist = modeEntrainement and 20 or 12
-        if confirme and (eta < seuilEta or dist < seuilDist) and dot > 0.1 and not didParry then
+        local seuilEta, seuilDist, seuilDot
+        if modeEntrainement then
+            seuilEta = 0.4; seuilDist = 25; seuilDot = -0.5
+        else
+            seuilEta = 0.15; seuilDist = 12; seuilDot = 0.1
+        end
+        if confirme and (eta < seuilEta or dist < seuilDist) and dot > seuilDot and not didParry then
             if doParry() then
                 didParry = true
                 pcall(function()

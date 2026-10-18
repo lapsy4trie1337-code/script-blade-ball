@@ -1,9 +1,10 @@
--- Auto Parry v19 — Perfect Parry
+-- Auto Parry v20 — Zero Mort
 --
--- Clic UNIQUEMENT quand confirme cible (rouge/attribut)
--- + impact imminent (ETA < 150ms ou dist < 10)
--- Filet securite: dist < 6 studs
--- Anti-feinte + prediction 5 frames
+-- Detection: rouge (GetDescendants + events) + attributs (cache) + ObjectValue
+-- Timing: ETA lisse sur 3 frames + prediction 5 frames
+-- Confirme: ETA < 150ms ou dist < 12
+-- Securite: dist < 8 meme sans rouge
+-- Anti-feinte + re-parry instantane
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -48,6 +49,12 @@ local prevDot = 0
 local feintDetectee = false
 local prevDist = 9999
 local closingSpd = 0
+local closingHist = {0, 0, 0}
+local closingIdx = 1
+
+-- Cache attributs (pas besoin de 120 checks/sec)
+local cachedConfAttr = false
+local attrCheckFrame = 0
 
 -- ═══════════════════════════════════════
 --  COULEURS
@@ -72,7 +79,9 @@ local TXT3   = Color3.fromRGB(95, 95, 125)
 local function checkRouge()
     charRouge = false
     if not cachedChar then return end
-    for _, ch in pairs(cachedChar:GetChildren()) do
+    local ok, desc = pcall(cachedChar.GetDescendants, cachedChar)
+    if not ok then return end
+    for _, ch in pairs(desc) do
         if ch:IsA("Highlight") then
             local ok1, fc = pcall(function() return ch.FillColor end)
             if ok1 and fc and fc.R > 0.5 and fc.G < 0.4 then
@@ -233,6 +242,16 @@ local function checkAttributs(b)
     if ok and matchT(t) then return true end
     ok, t = pcall(b.GetAttribute, b, "TargetPlayer")
     if ok and matchT(t) then return true end
+    -- ObjectValue (certains jeux)
+    local okC, children = pcall(b.GetChildren, b)
+    if okC then
+        for _, ch in pairs(children) do
+            if ch:IsA("ObjectValue") then
+                local okV, val = pcall(function() return ch.Value end)
+                if okV and val and (val == cachedChar or val == LP) then return true end
+            end
+        end
+    end
     local p = b.Parent
     if p and p ~= workspace then
         ok, t = pcall(p.GetAttribute, p, "Target")
@@ -312,7 +331,7 @@ mk("Frame", {Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 0), 
 local statusDot = mk("Frame", {Size = UDim2.new(0, 10, 0, 10), Position = UDim2.new(0, 12, 0, 16), BackgroundColor3 = GREEN, Parent = hdr})
 rnd(statusDot, 5)
 local statusLbl = mk("TextLabel", {Size = UDim2.new(0, 50, 0, 14), Position = UDim2.new(0, 28, 0, 14), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
-mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v19", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
+mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v20", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
 local btnMin = mk("TextButton", {Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -34, 0, 8), BackgroundColor3 = BG4, Text = "-", TextColor3 = TXT2, Font = Enum.Font.GothamBold, TextSize = 14, Parent = hdr})
 rnd(btnMin, 7)
 btnMin.MouseButton1Click:Connect(function()
@@ -377,7 +396,7 @@ local btnRst = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 22), Position = UD
 rnd(btnRst, 6)
 btnRst.MouseButton1Click:Connect(function() compteur = 0; streak = 0; best = 0 end)
 
-mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 294), BackgroundTransparency = 1, Text = "v19 | Perfect Parry", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
+mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 294), BackgroundTransparency = 1, Text = "v20 | Zero Mort", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
 
 local flash = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = GREEN, BackgroundTransparency = 1, ZIndex = 100, Parent = gui})
 
@@ -451,26 +470,34 @@ local function coreCheck()
     prevBTime = now
 
     -- ═══ SUIS-JE LA CIBLE? ═══
-    local confirme = charRouge or checkAttributs(b)
+    -- Rouge = instantane (event-based), attributs = cache toutes les 3 frames
+    if frameN - attrCheckFrame >= 3 then
+        cachedConfAttr = checkAttributs(b)
+        attrCheckFrame = frameN
+    end
+    local confirme = charRouge or cachedConfAttr
 
-    -- ═══ CLOSING SPEED (vitesse de rapprochement) ═══
+    -- ═══ CLOSING SPEED (lisse sur 3 frames) ═══
     if oldBPos then
         local dt = now - oldBTime
         if dt > 0.001 then
-            closingSpd = (prevDist - dist) / dt
+            local raw = (prevDist - dist) / dt
+            closingHist[closingIdx] = raw
+            closingIdx = (closingIdx % 3) + 1
+            closingSpd = (closingHist[1] + closingHist[2] + closingHist[3]) / 3
         end
     end
     prevDist = dist
 
     -- ═══ ETA : temps avant impact ═══
     local eta = 9999
-    if closingSpd > 5 then
+    if closingSpd > 3 then
         eta = dist / closingSpd
     end
 
     -- ═══ PREDICTION 5 FRAMES ═══
     local distEff = dist
-    if calcSpd > 30 then
+    if calcSpd > 20 then
         local dt5 = 5 / 60
         local predX = bPos.X + velX * dt5
         local predY = bPos.Y + velY * dt5
@@ -484,7 +511,7 @@ local function coreCheck()
 
     -- ETA avec prediction
     local etaPred = 9999
-    if closingSpd > 5 then
+    if closingSpd > 3 then
         etaPred = distEff / closingSpd
     end
 
@@ -503,18 +530,19 @@ local function coreCheck()
     end
     prevDot = dot
 
-    -- ═══ PERFECT PARRY — JUSTE MILIEU ═══
-    -- Confirme (rouge/attribut) : ETA < 150ms OU dist < 10
-    -- Securite absolue : dist < 6 + balle approche (jamais mourir)
+    -- ═══ PARRY — ZERO MORT ═══
+    -- 1) Confirme + ETA < 150ms = perfect timing
+    -- 2) Confirme + dist < 12 = filet distance
+    -- 3) PAS confirme + dist < 8 + balle approche = dernier recours
     local doit_parry = false
 
     if confirme then
         if eta < 0.15 or etaPred < 0.15 then
             doit_parry = true
-        elseif dist < 10 then
+        elseif dist < 12 then
             doit_parry = true
         end
-    elseif dist < 6 and closingSpd > 20 then
+    elseif dist < 8 and closingSpd > 10 then
         doit_parry = true
     end
 
@@ -592,4 +620,4 @@ RunService.Heartbeat:Connect(function()
     coreCheck()
 end)
 
-print("[AutoParry] v19 | Perfect parry | Clic uniquement quand impact < 100ms")
+print("[AutoParry] v20 | Zero mort | ETA lisse + rouge descendants + securite 8 studs")

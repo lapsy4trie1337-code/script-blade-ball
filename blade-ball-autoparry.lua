@@ -1,6 +1,6 @@
--- Auto Parry v23
--- Base sur un script qui marche : workspace.Balls + distance = parry
--- Mode Normal (rouge + dist) / Entrainement (dist seul)
+-- Auto Parry v24
+-- Normal: rouge + dist (inchange) / Entrainement: dist + velocity timing (DV-YONKO)
+-- ball.Velocity + time-to-impact + seuil dynamique
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -37,17 +37,12 @@ if cachedChar then task.spawn(function() onChar(cachedChar) end) end
 LP.CharacterAdded:Connect(onChar)
 LP.CharacterRemoving:Connect(function() cachedChar = nil; cachedHRP = nil; charRouge = false end)
 
--- Rouge: Highlight sur le personnage
+-- Rouge: Highlight direct sur le personnage (comme les autres scripts)
 local function checkRouge()
     charRouge = false
     if not cachedChar then return end
-    local ok, desc = pcall(cachedChar.GetDescendants, cachedChar)
-    if not ok then return end
-    for _, ch in pairs(desc) do
-        if ch:IsA("Highlight") then
-            charRouge = true; return
-        end
-    end
+    local ok, h = pcall(cachedChar.FindFirstChildWhichIsA, cachedChar, "Highlight")
+    if ok and h then charRouge = true end
 end
 
 -- Balls folder
@@ -60,7 +55,8 @@ end)
 -- Parry
 local function doParry()
     local now = tick()
-    if now - dernierP < 0.3 then return false end
+    local cd = modeEntrainement and 0.15 or 0.3
+    if now - dernierP < cd then return false end
     dernierP = now
     compteur = compteur + 1
     streak = streak + 1
@@ -131,7 +127,7 @@ mk("Frame", {Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 0), 
 local statusDot = mk("Frame", {Size = UDim2.new(0, 10, 0, 10), Position = UDim2.new(0, 12, 0, 16), BackgroundColor3 = GREEN, Parent = hdr})
 rnd(statusDot, 5)
 local statusLbl = mk("TextLabel", {Size = UDim2.new(0, 50, 0, 14), Position = UDim2.new(0, 28, 0, 14), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
-mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v23", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
+mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v24", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
 local btnMin = mk("TextButton", {Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -34, 0, 8), BackgroundColor3 = BG4, Text = "-", TextColor3 = TXT2, Font = Enum.Font.GothamBold, TextSize = 14, Parent = hdr})
 rnd(btnMin, 7)
 btnMin.MouseButton1Click:Connect(function()
@@ -210,7 +206,7 @@ local btnRst = mk("TextButton", {Size = UDim2.new(1, -20, 0, 22), Position = UDi
 rnd(btnRst, 6)
 btnRst.MouseButton1Click:Connect(function() compteur = 0; streak = 0; best = 0 end)
 
-mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 302), BackgroundTransparency = 1, Text = "v23 | Normal + Entrainement", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
+mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 302), BackgroundTransparency = 1, Text = "v24 | Velocity + Entrainement", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
 
 local flash = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = GREEN, BackgroundTransparency = 1, ZIndex = 100, Parent = gui})
 
@@ -240,12 +236,9 @@ end)
 gui.Parent = LP:WaitForChild("PlayerGui")
 
 -- ═══════════════════════════════════════
---  CORE — simple comme le script de reference
---
---  Chaque frame:
---  1. Cherche balles dans workspace.Balls
---  2. Normal: realBall + (rouge OU dist < 8) + dist < 13 → parry
---  3. Entrainement: toute balle + dist < 13 → parry
+--  CORE
+--  Normal: realBall + (rouge OU dist<8) + dist<13 (INCHANGE)
+--  Entrainement: dist<15 direct + velocity ETA 15-30 studs
 -- ═══════════════════════════════════════
 local uiDist = 9999
 local uiBalle = false
@@ -286,8 +279,25 @@ RunService.Heartbeat:Connect(function()
         if didParry then continue end
 
         if modeEntrainement then
-            -- Entrainement: toute balle non-anchored + distance
-            if not ball.Anchored and dist <= 13 then
+            -- Entrainement: dist 15 + velocity early detect (DV-YONKO)
+            local tParry = false
+            if not ball.Anchored then
+                if dist <= 15 then
+                    tParry = true
+                elseif dist <= 30 then
+                    local okV, bVel = pcall(function() return ball.Velocity end)
+                    if okV and bVel then
+                        local dir = (hPos - bPos).Unit
+                        local vt = bVel:Dot(dir)
+                        if vt > 5 then
+                            local eta = dist / vt
+                            local seuil = math.max(0.12, 0.15 - bVel.Magnitude * 0.002)
+                            if eta <= seuil then tParry = true end
+                        end
+                    end
+                end
+            end
+            if tParry then
                 if doParry() then
                     didParry = true
                     pcall(function()
@@ -335,4 +345,4 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
-print("[AutoParry] v23 | Simple + Fiable")
+print("[AutoParry] v24 | Velocity + Timing")

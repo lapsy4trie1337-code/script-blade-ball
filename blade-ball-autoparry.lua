@@ -1,9 +1,9 @@
--- Auto Parry v17 — Zero Faux Clic
+-- Auto Parry v19 — Perfect Parry
 --
--- REGLE D'OR : cliquer UNIQUEMENT quand on est CONFIRME comme cible
--- Confirme = personnage rouge (Highlight) OU attribut du jeu
--- + la balle doit etre TRES proche
--- Aucun chemin "estime" par velocite = zero clic pour rien
+-- Clic UNIQUEMENT quand confirme cible (rouge/attribut)
+-- + impact imminent (ETA < 150ms ou dist < 10)
+-- Filet securite: dist < 6 studs
+-- Anti-feinte + prediction 5 frames
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")

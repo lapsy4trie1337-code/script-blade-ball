@@ -547,26 +547,33 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
         -- Confirme?
         local confirme = charRouge
         if not confirme and doAttr then confirme = checkAttributs(b) end
-        if not confirme and modeEntrainement then
-            if st.closingSpd > 0 or dist < 30 then confirme = true end
-        end
 
-        if confirme then uiConfirme = true end
-
-        -- PARRY: confirme + balle proche + balle approche
-        local seuilEta, seuilDist, seuilDot
         if modeEntrainement then
-            seuilEta = 0.4; seuilDist = 25; seuilDot = -0.5
+            -- ENTRAINEMENT: simple — balle se rapproche + assez proche = parry
+            -- Seuil adapte a la vitesse (balle rapide → parry plus tot)
+            local seuil = math.clamp(14 + st.spd * 0.06, 14, 35)
+            local approche = dist < st.prevDist - 0.1
+            if approche and dist < seuil and not didParry then
+                uiConfirme = true
+                if doParry() then
+                    didParry = true
+                    pcall(function()
+                        flash.BackgroundTransparency = 0.8
+                        TweenService:Create(flash, TweenInfo.new(0.06), {BackgroundTransparency = 1}):Play()
+                    end)
+                end
+            end
         else
-            seuilEta = 0.15; seuilDist = 12; seuilDot = 0.1
-        end
-        if confirme and (eta < seuilEta or dist < seuilDist) and dot > seuilDot and not didParry then
-            if doParry() then
-                didParry = true
-                pcall(function()
-                    flash.BackgroundTransparency = 0.8
-                    TweenService:Create(flash, TweenInfo.new(0.06), {BackgroundTransparency = 1}):Play()
-                end)
+            -- NORMAL: confirme (rouge/attribut) + ETA/dist + direction
+            if confirme then uiConfirme = true end
+            if confirme and (eta < 0.15 or dist < 12) and dot > 0.1 and not didParry then
+                if doParry() then
+                    didParry = true
+                    pcall(function()
+                        flash.BackgroundTransparency = 0.8
+                        TweenService:Create(flash, TweenInfo.new(0.06), {BackgroundTransparency = 1}):Play()
+                    end)
+                end
             end
         end
     end

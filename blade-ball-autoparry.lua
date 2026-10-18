@@ -153,42 +153,24 @@ local function scanBalles()
     end
     if not ballsFolder then return end
 
+    -- D'abord chercher les balles avec realBall = true
     for _, v in pairs(ballsFolder:GetChildren()) do
-        if v:IsA("BasePart") then
-            if modeEntrainement then
-                ajouterBalle(v)
-            else
-                if estVraiBalle(v) then ajouterBalle(v) end
-            end
+        if v:IsA("BasePart") and estVraiBalle(v) then
+            ajouterBalle(v)
         elseif v:IsA("Model") then
             local p = v:FindFirstChildWhichIsA("BasePart")
-            if p then
-                if modeEntrainement then
-                    ajouterBalle(p)
-                elseif estVraiBalle(p) or estVraiBalle(v) then
-                    ajouterBalle(p)
-                end
-            end
+            if p and (estVraiBalle(p) or estVraiBalle(v)) then ajouterBalle(p) end
         end
     end
 
-    -- Fallback: si entrainement et rien trouve, chercher partout
-    if modeEntrainement and #balles == 0 then
-        local ok3, desc = pcall(workspace.GetDescendants, workspace)
-        if ok3 then
-            for _, v in pairs(desc) do
-                if v:IsA("BasePart") and not v.Anchored then
-                    local n = v.Name:lower()
-                    if n:find("ball") or n:find("orb") or n:find("proj") then
-                        local p = v.Parent
-                        local isPlayer = false
-                        while p and p ~= workspace do
-                            if Players:GetPlayerFromCharacter(p) then isPlayer = true; break end
-                            p = p.Parent
-                        end
-                        if not isPlayer then ajouterBalle(v) end
-                    end
-                end
+    -- Si rien trouve (entrainement sans realBall), prendre la 1ere BasePart non-anchored
+    if #balles == 0 then
+        for _, v in pairs(ballsFolder:GetChildren()) do
+            if v:IsA("BasePart") and not v.Anchored then
+                ajouterBalle(v); break
+            elseif v:IsA("Model") then
+                local p = v:FindFirstChildWhichIsA("BasePart")
+                if p and not p.Anchored then ajouterBalle(p); break end
             end
         end
     end
@@ -206,13 +188,21 @@ task.spawn(function()
     end
     if ballsFolder then
         ballsFolder.ChildAdded:Connect(function(b)
-            task.wait(0.1)
+            task.wait(0.15)
             if b:IsA("BasePart") then
-                if modeEntrainement or estVraiBalle(b) then ajouterBalle(b) end
+                if estVraiBalle(b) then
+                    ajouterBalle(b)
+                elseif not b.Anchored then
+                    ajouterBalle(b)
+                end
             elseif b:IsA("Model") then
                 local p = b:FindFirstChildWhichIsA("BasePart")
-                if p and (modeEntrainement or estVraiBalle(p) or estVraiBalle(b)) then
-                    ajouterBalle(p)
+                if p then
+                    if estVraiBalle(p) or estVraiBalle(b) then
+                        ajouterBalle(p)
+                    elseif not p.Anchored then
+                        ajouterBalle(p)
+                    end
                 end
             end
         end)

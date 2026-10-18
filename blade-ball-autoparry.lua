@@ -263,8 +263,8 @@ end
 -- ═══════════════════════════════════════
 local function doParry(spd, dist)
     local now = tick()
-    local cd = 0.2
-    if feintDetectee then cd = 0.04 end
+    local cd = 0.3
+    if feintDetectee then cd = 0.1 end
 
     if now - dernierP < cd then return false end
     dernierP = now
@@ -327,7 +327,7 @@ mk("Frame", {Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 0), 
 local statusDot = mk("Frame", {Size = UDim2.new(0, 10, 0, 10), Position = UDim2.new(0, 12, 0, 16), BackgroundColor3 = GREEN, Parent = hdr})
 rnd(statusDot, 5)
 local statusLbl = mk("TextLabel", {Size = UDim2.new(0, 50, 0, 14), Position = UDim2.new(0, 28, 0, 14), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
-mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v21", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
+mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v21.1", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
 local btnMin = mk("TextButton", {Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -34, 0, 8), BackgroundColor3 = BG4, Text = "-", TextColor3 = TXT2, Font = Enum.Font.GothamBold, TextSize = 14, Parent = hdr})
 rnd(btnMin, 7)
 btnMin.MouseButton1Click:Connect(function()
@@ -387,7 +387,7 @@ local btnRst = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 22), Position = UD
 rnd(btnRst, 6)
 btnRst.MouseButton1Click:Connect(function() compteur = 0; streak = 0; best = 0 end)
 
-mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 294), BackgroundTransparency = 1, Text = "v21 | Multi-Balle | Zero Mort", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
+mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 294), BackgroundTransparency = 1, Text = "v21.1 | Zero Faux Clic", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
 
 local flash = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = GREEN, BackgroundTransparency = 1, ZIndex = 100, Parent = gui})
 
@@ -540,11 +540,9 @@ local function coreCheck()
 
                 if confirme then
                     anyConfirme = true
-                    if dangerEta < 0.15 or dist < 12 then
+                    if (dangerEta < 0.15 or dist < 12) and dot > 0.15 then
                         shouldParry = true
                     end
-                elseif dist < 8 and bd.closingSpd > 10 then
-                    shouldParry = true
                 end
 
                 if shouldParry and dangerEta < bestParryEta then
@@ -639,8 +637,4 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
     end
 end)
 
-RunService.Heartbeat:Connect(function()
-    coreCheck()
-end)
-
-print("[AutoParry] v21 | Multi-balle | Zero mort | Entrainement compatible")
+print("[AutoParry] v21.1 | Multi-balle | Zero faux clic")

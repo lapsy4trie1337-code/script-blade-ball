@@ -107,86 +107,9 @@ LP.CharacterRemoving:Connect(function()
 end)
 
 -- ═══════════════════════════════════════
---  DETECTION BALLE — ultra large
+--  DETECTION BALLE — workspace.Balls + realBall
 -- ═══════════════════════════════════════
-local function estJoueur(o)
-    local p = o.Parent
-    while p and p ~= workspace do
-        if Players:GetPlayerFromCharacter(p) then return true end
-        p = p.Parent
-    end
-    return false
-end
-
-local function estBalle(o)
-    if not o:IsA("BasePart") then return false end
-    if o.Anchored then return false end
-    if estJoueur(o) then return false end
-    local n = o.Name:lower()
-    if n == "ball" or n == "balle" or n == "orb" then return true end
-    if n:find("projectile") or n:find("ball") or n:find("orb") then return true end
-    return false
-end
-
--- Trouver toutes les balles
-local function trouverBalles()
-    local result = {}
-
-    -- Methode 1: noms connus
-    for _, name in pairs({"Ball", "ball", "Balle", "Projectile", "Orb"}) do
-        local ok, found = pcall(function()
-            local items = {}
-            local function cherche(parent)
-                for _, ch in pairs(parent:GetChildren()) do
-                    if ch.Name == name and ch:IsA("BasePart") and not ch.Anchored and not estJoueur(ch) then
-                        table.insert(items, ch)
-                    end
-                    if ch:IsA("Folder") or ch:IsA("Model") then
-                        cherche(ch)
-                    end
-                end
-            end
-            cherche(workspace)
-            return items
-        end)
-        if ok then
-            for _, b in pairs(found) do result[b] = true end
-        end
-    end
-
-    -- Methode 2: folder "Balls"
-    local ok2, folder = pcall(workspace.FindFirstChild, workspace, "Balls")
-    if ok2 and folder then
-        for _, v in pairs(folder:GetDescendants()) do
-            if v:IsA("BasePart") and not v.Anchored and not estJoueur(v) then
-                result[v] = true
-            end
-        end
-    end
-
-    -- Methode 3: scan large (fallback en Normal, toujours en Entrainement)
-    if next(result) == nil or modeEntrainement then
-        local ok3, desc = pcall(workspace.GetDescendants, workspace)
-        if ok3 then
-            for _, v in pairs(desc) do
-                if v:IsA("BasePart") and not v.Anchored and not estJoueur(v) then
-                    local n = v.Name:lower()
-                    if n:find("ball") or n:find("orb") or n:find("proj") or n:find("balle") then
-                        result[v] = true
-                    end
-                end
-            end
-        end
-    end
-
-    local list = {}
-    for b in pairs(result) do table.insert(list, b) end
-    return list
-end
-
--- ═══════════════════════════════════════
---  TRACKING PAR BALLE
--- ═══════════════════════════════════════
+local ballsFolder = nil
 local balles = {}
 local bState = {}
 
@@ -203,48 +126,90 @@ local function getState(b)
     return bState[b]
 end
 
-local function majBalles()
-    local found = trouverBalles()
-    -- Ajouter nouvelles
-    for _, b in pairs(found) do getState(b) end
-    -- Mettre a jour la liste
-    balles = {}
-    for b in pairs(bState) do
-        if b.Parent then
-            table.insert(balles, b)
-        else
-            bState[b] = nil
-        end
+local function ajouterBalle(b)
+    if bState[b] then return end
+    getState(b)
+    table.insert(balles, b)
+end
+
+local function retirerBalle(b)
+    bState[b] = nil
+    for i = #balles, 1, -1 do
+        if balles[i] == b then table.remove(balles, i); break end
     end
 end
 
--- Event: nouvelle balle
-workspace.DescendantAdded:Connect(function(o)
-    if o:IsA("BasePart") and not o.Anchored then
-        local n = o.Name:lower()
-        if n:find("ball") or n:find("orb") or n:find("proj") or n:find("balle") then
-            if not estJoueur(o) then
-                getState(o)
-                table.insert(balles, o)
+local function estVraiBalle(b)
+    if not b:IsA("BasePart") then return false end
+    local ok, val = pcall(b.GetAttribute, b, "realBall")
+    if ok and val == true then return true end
+    return false
+end
+
+local function scanBalles()
+    if not ballsFolder then
+        local ok, f = pcall(workspace.FindFirstChild, workspace, "Balls")
+        if ok and f then ballsFolder = f end
+    end
+    if not ballsFolder then return end
+
+    for _, v in pairs(ballsFolder:GetChildren()) do
+        if v:IsA("BasePart") then
+            if modeEntrainement then
+                ajouterBalle(v)
+            else
+                if estVraiBalle(v) then ajouterBalle(v) end
+            end
+        elseif v:IsA("Model") then
+            local p = v:FindFirstChildWhichIsA("BasePart")
+            if p then
+                if modeEntrainement then
+                    ajouterBalle(p)
+                elseif estVraiBalle(p) or estVraiBalle(v) then
+                    ajouterBalle(p)
+                end
             end
         end
     end
-end)
-workspace.DescendantRemoving:Connect(function(o)
-    if bState[o] then
-        bState[o] = nil
-        for i = #balles, 1, -1 do
-            if balles[i] == o then table.remove(balles, i); break end
-        end
+
+    for i = #balles, 1, -1 do
+        if not balles[i].Parent then retirerBalle(balles[i]) end
+    end
+end
+
+-- Event: nouvelle balle dans le folder
+task.spawn(function()
+    if not ballsFolder then
+        local ok, f = pcall(workspace.WaitForChild, workspace, "Balls", 30)
+        if ok and f then ballsFolder = f end
+    end
+    if ballsFolder then
+        ballsFolder.ChildAdded:Connect(function(b)
+            task.wait(0.1)
+            if b:IsA("BasePart") then
+                if modeEntrainement or estVraiBalle(b) then ajouterBalle(b) end
+            elseif b:IsA("Model") then
+                local p = b:FindFirstChildWhichIsA("BasePart")
+                if p and (modeEntrainement or estVraiBalle(p) or estVraiBalle(b)) then
+                    ajouterBalle(p)
+                end
+            end
+        end)
+        ballsFolder.ChildRemoved:Connect(function(b)
+            if bState[b] then retirerBalle(b) end
+            for _, ch in pairs(b:GetDescendants()) do
+                if bState[ch] then retirerBalle(ch) end
+            end
+        end)
     end
 end)
 
 -- Scan initial + periodique
-majBalles()
+scanBalles()
 task.spawn(function()
     while true do
         task.wait(1)
-        majBalles()
+        scanBalles()
     end
 end)
 

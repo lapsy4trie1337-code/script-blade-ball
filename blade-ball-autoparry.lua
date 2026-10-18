@@ -46,6 +46,8 @@ local calcSpd = 0
 -- Anti-feinte : tracking direction
 local prevDot = 0
 local feintDetectee = false
+local prevDist = 9999
+local closingSpd = 0
 
 -- ═══════════════════════════════════════
 --  COULEURS
@@ -246,10 +248,9 @@ end
 -- ═══════════════════════════════════════
 local function doParry(spd, dist)
     local now = tick()
-    -- Cooldown bas = reagir a tout prix
-    local cd = 0.2
-    if spd > 150 then cd = 0.1 end
-    if feintDetectee then cd = 0.02 end
+    local cd = 0.12
+    if spd > 150 then cd = 0.05 end
+    if feintDetectee then cd = 0.01 end
 
     if now - dernierP < cd then return false end
     dernierP = now
@@ -313,7 +314,7 @@ mk("Frame", {Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 0), 
 local statusDot = mk("Frame", {Size = UDim2.new(0, 10, 0, 10), Position = UDim2.new(0, 12, 0, 16), BackgroundColor3 = GREEN, Parent = hdr})
 rnd(statusDot, 5)
 local statusLbl = mk("TextLabel", {Size = UDim2.new(0, 50, 0, 14), Position = UDim2.new(0, 28, 0, 14), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
-mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v17.4", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
+mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v18", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
 local btnMin = mk("TextButton", {Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -34, 0, 8), BackgroundColor3 = BG4, Text = "-", TextColor3 = TXT2, Font = Enum.Font.GothamBold, TextSize = 14, Parent = hdr})
 rnd(btnMin, 7)
 btnMin.MouseButton1Click:Connect(function()
@@ -378,7 +379,7 @@ local btnRst = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 22), Position = UD
 rnd(btnRst, 6)
 btnRst.MouseButton1Click:Connect(function() compteur = 0; streak = 0; best = 0 end)
 
-mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 294), BackgroundTransparency = 1, Text = "v17.4 | Survie Max", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
+mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 294), BackgroundTransparency = 1, Text = "v18 | ETA Prediction", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
 
 local flash = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = GREEN, BackgroundTransparency = 1, ZIndex = 100, Parent = gui})
 
@@ -454,9 +455,24 @@ local function coreCheck()
     -- ═══ SUIS-JE LA CIBLE? ═══
     local confirme = charRouge or checkAttributs(b)
 
+    -- ═══ CLOSING SPEED (vitesse de rapprochement) ═══
+    if oldBPos then
+        local dt = now - oldBTime
+        if dt > 0.001 then
+            closingSpd = (prevDist - dist) / dt
+        end
+    end
+    prevDist = dist
+
+    -- ═══ ETA : temps avant impact ═══
+    local eta = 9999
+    if closingSpd > 5 then
+        eta = dist / closingSpd
+    end
+
     -- ═══ PREDICTION 5 FRAMES ═══
     local distEff = dist
-    if confirme and calcSpd > 30 then
+    if calcSpd > 30 then
         local dt5 = 5 / 60
         local predX = bPos.X + velX * dt5
         local predY = bPos.Y + velY * dt5
@@ -468,7 +484,13 @@ local function coreCheck()
         if predDist < dist then distEff = predDist end
     end
 
-    -- ═══ ANTI-FEINTE : detecte chaque changement de direction ═══
+    -- ETA avec prediction
+    local etaPred = 9999
+    if closingSpd > 5 then
+        etaPred = distEff / closingSpd
+    end
+
+    -- ═══ ANTI-FEINTE ═══
     local dot = 0
     if calcSpd > 5 and dist > 0.1 then
         local dirX = -dx / dist
@@ -476,8 +498,6 @@ local function coreCheck()
         local dirZ = -dz / dist
         dot = (velX * dirX + velY * dirY + velZ * dirZ) / calcSpd
     end
-
-    -- Feinte = la balle allait s'eloigner (dot negatif) et revient (dot positif)
     feintDetectee = false
     if prevDot < -0.1 and dot > 0.2 then
         feintDetectee = true
@@ -485,17 +505,18 @@ local function coreCheck()
     end
     prevDot = dot
 
-    local seuil = math.clamp(12 + calcSpd * 0.12, 12, 55)
-
     -- ═══ PARRY — SURVIE A TOUT PRIX ═══
-    -- 1) CONFIRME (rouge/attribut) + proche = PARRY
-    -- 2) SECURITE : meme sans rouge, si balle TRES proche + fonce sur moi = PARRY
-    --    (filet de securite pour jamais mourir)
+    -- Methode 1 : CONFIRME + ETA < 0.2s (impact dans 200ms)
+    -- Methode 2 : CONFIRME + distance < 15
+    -- Methode 3 : PAS confirme mais ETA < 0.12s (impact imminent = survie)
+    -- Methode 4 : PAS confirme mais dist < 10 + balle fonce
     local doit_parry = false
 
-    if confirme and distEff < seuil then
+    if confirme and (etaPred < 0.2 or eta < 0.2) then
         doit_parry = true
-    elseif dot > 0.5 and dist < 18 and calcSpd > 30 then
+    elseif confirme and distEff < 15 then
+        doit_parry = true
+    elseif (eta < 0.12 or etaPred < 0.12) and closingSpd > 30 then
         doit_parry = true
     elseif dist < 10 and dot > 0.3 then
         doit_parry = true
@@ -553,8 +574,8 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
             local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
             local seuil = math.clamp(8 + calcSpd * 0.05, 8, 25)
 
-            local seuil = math.clamp(12 + calcSpd * 0.12, 12, 55)
-            lInfo.Text = "Dist " .. math.floor(dist) .. " | Vit " .. math.floor(calcSpd) .. " | Zone " .. math.floor(seuil)
+            local etaDisp = (closingSpd > 5) and string.format("%.2f", dist / closingSpd) or "--"
+            lInfo.Text = "Dist " .. math.floor(dist) .. " | Vit " .. math.floor(calcSpd) .. " | ETA " .. etaDisp .. "s"
             lInfo.TextColor3 = YELLOW
 
             if charRouge then
@@ -575,4 +596,4 @@ RunService.Heartbeat:Connect(function()
     coreCheck()
 end)
 
-print("[AutoParry] v17.4 | Survie max | Anti-feinte + filet securite")
+print("[AutoParry] v18 | ETA prediction | Parry quand impact < 200ms")

@@ -569,6 +569,7 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
         -- Confirme?
         local confirme = charRouge
         if not confirme and doAttr then confirme = checkAttributs(b) end
+        if not confirme and modeEntrainement and dot > 0.2 then confirme = true end
 
         if confirme then uiConfirme = true end
 

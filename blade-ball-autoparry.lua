@@ -242,8 +242,8 @@ end
 -- ═══════════════════════════════════════
 local function doParry(spd, dist)
     local now = tick()
-    local cd = 0.15
-    if spd > 150 then cd = 0.06 end
+    local cd = 0.08
+    if spd > 120 then cd = 0.03 end
 
     if now - dernierP < cd then return false end
     dernierP = now
@@ -252,7 +252,7 @@ local function doParry(spd, dist)
     if streak > best then best = streak end
 
     pcall(mouse1click)
-    if spd > 150 and dist < 18 then
+    if spd > 120 and dist < 25 then
         pcall(mouse1click)
     end
     return true
@@ -309,7 +309,7 @@ mk("Frame", {Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 0), 
 local statusDot = mk("Frame", {Size = UDim2.new(0, 10, 0, 10), Position = UDim2.new(0, 12, 0, 16), BackgroundColor3 = GREEN, Parent = hdr})
 rnd(statusDot, 5)
 local statusLbl = mk("TextLabel", {Size = UDim2.new(0, 50, 0, 14), Position = UDim2.new(0, 28, 0, 14), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
-mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v17.1", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
+mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v17.2", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
 local btnMin = mk("TextButton", {Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -34, 0, 8), BackgroundColor3 = BG4, Text = "-", TextColor3 = TXT2, Font = Enum.Font.GothamBold, TextSize = 14, Parent = hdr})
 rnd(btnMin, 7)
 btnMin.MouseButton1Click:Connect(function()
@@ -374,7 +374,7 @@ local btnRst = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 22), Position = UD
 rnd(btnRst, 6)
 btnRst.MouseButton1Click:Connect(function() compteur = 0; streak = 0; best = 0 end)
 
-mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 294), BackgroundTransparency = 1, Text = "v17.1 | Reactif + Zero Faux Clic", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
+mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 294), BackgroundTransparency = 1, Text = "v17.2 | Ultra Reactif", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
 
 local flash = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = GREEN, BackgroundTransparency = 1, ZIndex = 100, Parent = gui})
 
@@ -430,15 +430,18 @@ local function coreCheck()
     local dz = bPos.Z - hPos.Z
     local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
 
-    -- Vitesse calculee par position (fiable)
+    -- Vitesse + direction calculees par position (fiable)
     local now = tick()
-    if prevBPos then
-        local dt = now - prevBTime
+    local oldBPos = prevBPos
+    local oldBTime = prevBTime
+    local velX, velY, velZ = 0, 0, 0
+    if oldBPos then
+        local dt = now - oldBTime
         if dt > 0.001 then
-            local vx = bPos.X - prevBPos.X
-            local vy = bPos.Y - prevBPos.Y
-            local vz = bPos.Z - prevBPos.Z
-            calcSpd = math.sqrt(vx * vx + vy * vy + vz * vz) / dt
+            velX = (bPos.X - oldBPos.X) / dt
+            velY = (bPos.Y - oldBPos.Y) / dt
+            velZ = (bPos.Z - oldBPos.Z) / dt
+            calcSpd = math.sqrt(velX * velX + velY * velY + velZ * velZ)
         end
     end
     prevBPos = bPos
@@ -447,32 +450,35 @@ local function coreCheck()
     -- ═══ SUIS-JE LA CIBLE? ═══
     local confirme = charRouge or checkAttributs(b)
 
-    -- ═══ PREDICTION + SEUIL ═══
-    -- Pour balles rapides : predit la position 3 frames en avance
+    -- ═══ PREDICTION 5 FRAMES ═══
     local distEff = dist
-    if confirme and prevBPos and calcSpd > 50 then
-        local dt3 = 3 / 60
-        local vx = (bPos.X - prevBPos.X)
-        local vy = (bPos.Y - prevBPos.Y)
-        local vz = (bPos.Z - prevBPos.Z)
-        local nt = now - prevBTime
-        if nt > 0.001 then
-            local r = dt3 / nt
-            local predX = bPos.X + vx * r
-            local predY = bPos.Y + vy * r
-            local predZ = bPos.Z + vz * r
-            local pdx = predX - hPos.X
-            local pdy = predY - hPos.Y
-            local pdz = predZ - hPos.Z
-            local predDist = math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz)
-            if predDist < dist then distEff = predDist end
-        end
+    if confirme and calcSpd > 30 then
+        local dt5 = 5 / 60
+        local predX = bPos.X + velX * dt5
+        local predY = bPos.Y + velY * dt5
+        local predZ = bPos.Z + velZ * dt5
+        local pdx = predX - hPos.X
+        local pdy = predY - hPos.Y
+        local pdz = predZ - hPos.Z
+        local predDist = math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz)
+        if predDist < dist then distEff = predDist end
     end
 
-    local seuil = math.clamp(10 + calcSpd * 0.08, 10, 40)
+    -- Balle approche? (dot product direction vs joueur)
+    local approche = false
+    if calcSpd > 5 then
+        local dirX = -dx / dist
+        local dirY = -dy / dist
+        local dirZ = -dz / dist
+        local dot = (velX * dirX + velY * dirY + velZ * dirZ) / calcSpd
+        approche = dot > 0.3
+    end
+
+    local seuil = math.clamp(12 + calcSpd * 0.12, 12, 55)
 
     -- ═══ PARRY ═══
-    if confirme and distEff < seuil then
+    -- Confirme + (proche OU prediction proche) + balle approche
+    if confirme and distEff < seuil and approche then
         local ok = doParry(calcSpd, dist)
         if ok then
             pcall(function()
@@ -524,7 +530,7 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
             local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
             local seuil = math.clamp(8 + calcSpd * 0.05, 8, 25)
 
-            local seuil = math.clamp(10 + calcSpd * 0.08, 10, 40)
+            local seuil = math.clamp(12 + calcSpd * 0.12, 12, 55)
             lInfo.Text = "Dist " .. math.floor(dist) .. " | Vit " .. math.floor(calcSpd) .. " | Zone " .. math.floor(seuil)
             lInfo.TextColor3 = YELLOW
 
@@ -546,4 +552,4 @@ RunService.Heartbeat:Connect(function()
     coreCheck()
 end)
 
-print("[AutoParry] v17.1 | Reactif + zero faux clic | Prediction 3 frames")
+print("[AutoParry] v17.2 | Ultra reactif | Prediction 5 frames | Seuil 12-55")

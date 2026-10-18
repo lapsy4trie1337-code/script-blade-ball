@@ -1,6 +1,6 @@
--- Auto Parry v26
+-- Auto Parry v27
 -- Normal: INCHANGE (rouge + dist)
--- Entrainement: detection robuste + dist 20 + debug
+-- Entrainement: workspace.Balls + FALLBACK workspace scan complet
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -65,6 +65,10 @@ pcall(function()
         end
     end)
 end)
+
+-- Fallback: scan workspace entier pour training
+local fallbackBalls = {}
+local lastFbScan = 0
 
 -- Parry
 local function doParry()
@@ -141,7 +145,7 @@ mk("Frame", {Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 0), 
 local statusDot = mk("Frame", {Size = UDim2.new(0, 10, 0, 10), Position = UDim2.new(0, 12, 0, 16), BackgroundColor3 = GREEN, Parent = hdr})
 rnd(statusDot, 5)
 local statusLbl = mk("TextLabel", {Size = UDim2.new(0, 50, 0, 14), Position = UDim2.new(0, 28, 0, 14), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
-mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v26", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
+mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v27", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
 local btnMin = mk("TextButton", {Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -34, 0, 8), BackgroundColor3 = BG4, Text = "-", TextColor3 = TXT2, Font = Enum.Font.GothamBold, TextSize = 14, Parent = hdr})
 rnd(btnMin, 7)
 btnMin.MouseButton1Click:Connect(function()
@@ -220,7 +224,7 @@ local btnRst = mk("TextButton", {Size = UDim2.new(1, -20, 0, 22), Position = UDi
 rnd(btnRst, 6)
 btnRst.MouseButton1Click:Connect(function() compteur = 0; streak = 0; best = 0 end)
 
-mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 302), BackgroundTransparency = 1, Text = "v26 | Debug + Robust", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
+mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 302), BackgroundTransparency = 1, Text = "v27 | Workspace Scan", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
 
 local flash = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = GREEN, BackgroundTransparency = 1, ZIndex = 100, Parent = gui})
 
@@ -252,7 +256,7 @@ gui.Parent = LP:WaitForChild("PlayerGui")
 -- ═══════════════════════════════════════
 --  CORE
 --  Normal: realBall + (rouge OU dist<8) + dist<13 (INCHANGE)
---  Entrainement: dist<20 ultra simple + debug prints
+--  Entrainement: Balls folder + fallback workspace:GetDescendants
 -- ═══════════════════════════════════════
 local uiDist = 9999
 local uiBalle = false
@@ -321,18 +325,59 @@ RunService.Heartbeat:Connect(function()
         end
     end
 
+    -- Training fallback: scan TOUT workspace si rien dans Balls
+    if modeEntrainement and not didParry then
+        local now = tick()
+        if now - lastFbScan > 0.5 then
+            lastFbScan = now
+            fallbackBalls = {}
+            pcall(function()
+                for _, d in pairs(workspace:GetDescendants()) do
+                    if d:IsA("BasePart") and d ~= cachedHRP then
+                        local anc = d:FindFirstAncestorOfClass("Model")
+                        if anc and anc:FindFirstChildOfClass("Humanoid") then continue end
+                        if d:FindFirstAncestorOfClass("Tool") then continue end
+                        if d:FindFirstAncestorOfClass("Accessory") then continue end
+                        local n = d.Name:lower()
+                        if n:find("ball") or d:GetAttribute("realBall") then
+                            table.insert(fallbackBalls, d)
+                        end
+                    end
+                end
+            end)
+            if frameN % 240 == 0 then
+                print("[Train] Balls=" .. tostring(ballsFolder ~= nil) .. " folder_children=" .. #children .. " fallback=" .. #fallbackBalls .. " closest=" .. math.floor(closestDist))
+                for _, fb in pairs(fallbackBalls) do
+                    pcall(function()
+                        print("[Train]   " .. fb:GetFullName() .. " [" .. fb.ClassName .. "] dist=" .. math.floor((fb.Position - hPos).Magnitude))
+                    end)
+                end
+            end
+        end
+
+        for _, fb in pairs(fallbackBalls) do
+            if didParry then break end
+            if not fb.Parent then continue end
+            local okP, fbPos = pcall(function() return fb.Position end)
+            if not okP then continue end
+            local fDist = (fbPos - hPos).Magnitude
+            if fDist < closestDist then closestDist = fDist end
+            if fDist <= 20 then
+                if doParry() then
+                    didParry = true
+                    pcall(function()
+                        flash.BackgroundTransparency = 0.8
+                        TweenService:Create(flash, TweenInfo.new(0.06), {BackgroundTransparency = 1}):Play()
+                    end)
+                end
+            end
+        end
+    end
+
     uiDist = closestDist
     uiBalle = closestDist < 9999
 
     if not didParry and closestDist > 50 then streak = 0 end
-
-    -- Debug training (toutes les 2 sec)
-    if modeEntrainement and frameN % 120 == 0 then
-        local nBase = 0
-        local nTotal = #children
-        for _, b in pairs(children) do if b:IsA("BasePart") then nBase = nBase + 1 end end
-        print("[Train] folder=" .. tostring(ballsFolder ~= nil) .. " total=" .. nTotal .. " baseParts=" .. nBase .. " closest=" .. math.floor(closestDist))
-    end
 
     -- UI
     if frameN % 20 ~= 0 then return end
@@ -341,14 +386,14 @@ RunService.Heartbeat:Connect(function()
     lB.Text = tostring(best)
 
     if not uiBalle then
-        lBalle.Text = "Recherche..."
+        lBalle.Text = modeEntrainement and ("Scan... fb=" .. #fallbackBalls) or "Recherche..."
         lBalle.TextColor3 = ORANGE
-        lInfo.Text = ""
+        lInfo.Text = modeEntrainement and ("Balls=" .. tostring(ballsFolder ~= nil) .. " ch=" .. #children) or ""
     else
         lBalle.Text = "Balle detectee"
         lBalle.TextColor3 = GREEN
-        lInfo.Text = "Dist " .. math.floor(uiDist) .. (charRouge and " | ROUGE" or " | Surveillance")
+        lInfo.Text = "Dist " .. math.floor(uiDist) .. (modeEntrainement and " | TRAIN" or (charRouge and " | ROUGE" or " | Surveillance"))
     end
 end)
 
-print("[AutoParry] v26 | Debug + dist20 | Si sa marche pas, regarde la console F9")
+print("[AutoParry] v27 | Workspace scan + Balls folder | F9 pour debug")

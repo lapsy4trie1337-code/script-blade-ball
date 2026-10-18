@@ -188,22 +188,11 @@ task.spawn(function()
     end
     if ballsFolder then
         ballsFolder.ChildAdded:Connect(function(b)
-            task.wait(0.15)
-            if b:IsA("BasePart") then
-                if estVraiBalle(b) then
-                    ajouterBalle(b)
-                elseif not b.Anchored then
-                    ajouterBalle(b)
-                end
+            if b:IsA("BasePart") and not b.Anchored then
+                ajouterBalle(b)
             elseif b:IsA("Model") then
                 local p = b:FindFirstChildWhichIsA("BasePart")
-                if p then
-                    if estVraiBalle(p) or estVraiBalle(b) then
-                        ajouterBalle(p)
-                    elseif not p.Anchored then
-                        ajouterBalle(p)
-                    end
-                end
+                if p and not p.Anchored then ajouterBalle(p) end
             end
         end)
         ballsFolder.ChildRemoved:Connect(function(b)
@@ -215,11 +204,21 @@ task.spawn(function()
     end
 end)
 
--- Scan initial + periodique
+-- Backup: DescendantAdded sur workspace (attrape tout)
+workspace.DescendantAdded:Connect(function(o)
+    if o:IsA("BasePart") and not o.Anchored then
+        local p = o.Parent
+        if p and (p.Name == "Balls" or (p.Parent and p.Parent.Name == "Balls")) then
+            ajouterBalle(o)
+        end
+    end
+end)
+
+-- Scan initial + periodique (0.3s)
 scanBalles()
 task.spawn(function()
     while true do
-        task.wait(1)
+        task.wait(0.3)
         scanBalles()
     end
 end)
@@ -461,6 +460,7 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
     local now = tick()
 
     if frameN % 2 == 0 then checkRouge() end
+    if frameN % 10 == 0 then scanBalles() end
 
     local doAttr = (frameN % 6 == 0)
     local didParry = false

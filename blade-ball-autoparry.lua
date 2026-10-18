@@ -242,8 +242,8 @@ end
 -- ═══════════════════════════════════════
 local function doParry(spd, dist)
     local now = tick()
-    local cd = 0.3
-    if spd > 200 and dist < 12 then cd = 0.1 end
+    local cd = 0.15
+    if spd > 150 then cd = 0.06 end
 
     if now - dernierP < cd then return false end
     dernierP = now
@@ -252,7 +252,7 @@ local function doParry(spd, dist)
     if streak > best then best = streak end
 
     pcall(mouse1click)
-    if spd > 200 and dist < 12 then
+    if spd > 150 and dist < 18 then
         pcall(mouse1click)
     end
     return true
@@ -309,7 +309,7 @@ mk("Frame", {Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 0), 
 local statusDot = mk("Frame", {Size = UDim2.new(0, 10, 0, 10), Position = UDim2.new(0, 12, 0, 16), BackgroundColor3 = GREEN, Parent = hdr})
 rnd(statusDot, 5)
 local statusLbl = mk("TextLabel", {Size = UDim2.new(0, 50, 0, 14), Position = UDim2.new(0, 28, 0, 14), BackgroundTransparency = 1, Text = "ACTIF", TextColor3 = GREEN, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
-mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v17", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
+mk("TextLabel", {Size = UDim2.new(0, 130, 0, 14), Position = UDim2.new(0, 80, 0, 14), BackgroundTransparency = 1, Text = "AUTO PARRY v17.1", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = hdr})
 local btnMin = mk("TextButton", {Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -34, 0, 8), BackgroundColor3 = BG4, Text = "-", TextColor3 = TXT2, Font = Enum.Font.GothamBold, TextSize = 14, Parent = hdr})
 rnd(btnMin, 7)
 btnMin.MouseButton1Click:Connect(function()
@@ -374,7 +374,7 @@ local btnRst = mk("TextButton", {Size = UDim2.new(0.47, 0, 0, 22), Position = UD
 rnd(btnRst, 6)
 btnRst.MouseButton1Click:Connect(function() compteur = 0; streak = 0; best = 0 end)
 
-mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 294), BackgroundTransparency = 1, Text = "v17 | Zero Faux Clic | 120fps", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
+mk("TextLabel", {Size = UDim2.new(1, -20, 0, 12), Position = UDim2.new(0, 10, 0, 294), BackgroundTransparency = 1, Text = "v17.1 | Reactif + Zero Faux Clic", TextColor3 = TXT3, Font = Enum.Font.Gotham, TextSize = 7, Parent = panel})
 
 local flash = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = GREEN, BackgroundTransparency = 1, ZIndex = 100, Parent = gui})
 
@@ -447,13 +447,32 @@ local function coreCheck()
     -- ═══ SUIS-JE LA CIBLE? ═══
     local confirme = charRouge or checkAttributs(b)
 
-    -- ═══ LA BALLE EST-ELLE TRES PROCHE? ═══
-    -- Seuil adapte a la vitesse (balle rapide = cliquer un peu plus tot)
-    -- Mais toujours TRES proche : max 25 studs
-    local seuil = math.clamp(8 + calcSpd * 0.05, 8, 25)
+    -- ═══ PREDICTION + SEUIL ═══
+    -- Pour balles rapides : predit la position 3 frames en avance
+    local distEff = dist
+    if confirme and prevBPos and calcSpd > 50 then
+        local dt3 = 3 / 60
+        local vx = (bPos.X - prevBPos.X)
+        local vy = (bPos.Y - prevBPos.Y)
+        local vz = (bPos.Z - prevBPos.Z)
+        local nt = now - prevBTime
+        if nt > 0.001 then
+            local r = dt3 / nt
+            local predX = bPos.X + vx * r
+            local predY = bPos.Y + vy * r
+            local predZ = bPos.Z + vz * r
+            local pdx = predX - hPos.X
+            local pdy = predY - hPos.Y
+            local pdz = predZ - hPos.Z
+            local predDist = math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz)
+            if predDist < dist then distEff = predDist end
+        end
+    end
+
+    local seuil = math.clamp(10 + calcSpd * 0.08, 10, 40)
 
     -- ═══ PARRY ═══
-    if confirme and dist < seuil then
+    if confirme and distEff < seuil then
         local ok = doParry(calcSpd, dist)
         if ok then
             pcall(function()
@@ -472,8 +491,8 @@ end
 RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
     frameN = frameN + 1
 
-    -- Rouge check toutes les 4 frames en plus des events
-    if frameN % 4 == 0 then checkRouge() end
+    -- Rouge check toutes les 2 frames en plus des events
+    if frameN % 2 == 0 then checkRouge() end
 
     coreCheck()
 
@@ -505,6 +524,7 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
             local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
             local seuil = math.clamp(8 + calcSpd * 0.05, 8, 25)
 
+            local seuil = math.clamp(10 + calcSpd * 0.08, 10, 40)
             lInfo.Text = "Dist " .. math.floor(dist) .. " | Vit " .. math.floor(calcSpd) .. " | Zone " .. math.floor(seuil)
             lInfo.TextColor3 = YELLOW
 
@@ -526,4 +546,4 @@ RunService.Heartbeat:Connect(function()
     coreCheck()
 end)
 
-print("[AutoParry] v17 | Zero faux clic | Clic uniquement quand rouge + proche")
+print("[AutoParry] v17.1 | Reactif + zero faux clic | Prediction 3 frames")

@@ -499,7 +499,14 @@ RunService:BindToRenderStep(RK, Enum.RenderPriority.First.Value, function()
         end
     end
 
-    for _, b in pairs(balles) do
+    -- En mode Normal: seulement la 1ere balle trouvee
+    -- En mode Entrainement: toutes les balles
+    local listeBoucle = balles
+    if not modeEntrainement and #balles > 1 then
+        listeBoucle = { balles[1] }
+    end
+
+    for _, b in pairs(listeBoucle) do
         local okP, bPos = pcall(function() return b.Position end)
         if not okP then continue end
 

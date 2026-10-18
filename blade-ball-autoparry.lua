@@ -164,8 +164,8 @@ local function trouverBalles()
         end
     end
 
-    -- Methode 3: tout objet non-ancre sphere-like pas joueur (fallback)
-    if next(result) == nil then
+    -- Methode 3: scan large (fallback en Normal, toujours en Entrainement)
+    if next(result) == nil or modeEntrainement then
         local ok3, desc = pcall(workspace.GetDescendants, workspace)
         if ok3 then
             for _, v in pairs(desc) do
